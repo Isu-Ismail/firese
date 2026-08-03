@@ -9,7 +9,18 @@ import { get } from 'svelte/store';
 
 const STUN_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' }
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun.services.mozilla.com' },
+  {
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp'
+    ],
+    username: 'openrelay',
+    credential: 'openrelay'
+  }
 ];
 
 /** @type {Map<string, RTCPeerConnection>} */
