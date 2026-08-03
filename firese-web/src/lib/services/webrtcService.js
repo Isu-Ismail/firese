@@ -1,5 +1,6 @@
 /**
- * WebRTC P2P Mesh Service with Google STUN Servers & DataChannel Relay
+ * WebRTC P2P Mesh Service with STUN + Free TURN Relay Servers
+ * TURN servers enable P2P on symmetric NAT (college/corporate networks)
  */
 
 import { sendWebSocketMessage } from './websocket.js';
@@ -7,9 +8,25 @@ import { roomStore } from '../stores/roomStore.js';
 import { handleIncomingMetadata, handleIncomingChunk, handleTransferAck } from './fileStreamer.js';
 import { get } from 'svelte/store';
 
-const STUN_SERVERS = [
+const ICE_SERVERS = [
+  // STUN (discover public IP)
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' }
+  // Metered Open Relay TURN — free 20GB/mo, static auth, ports 80/443 bypass firewalls
+  {
+    urls: 'turn:standard.relay.metered.ca:80',
+    username: 'e8dd65b92f60fede1df78e11',
+    credential: '2jMX+JaOy2GeLlKf'
+  },
+  {
+    urls: 'turn:standard.relay.metered.ca:443',
+    username: 'e8dd65b92f60fede1df78e11',
+    credential: '2jMX+JaOy2GeLlKf'
+  },
+  {
+    urls: 'turns:standard.relay.metered.ca:443?transport=tcp',
+    username: 'e8dd65b92f60fede1df78e11',
+    credential: '2jMX+JaOy2GeLlKf'
+  }
 ];
 
 /** @type {Map<string, RTCPeerConnection>} */
@@ -31,7 +48,7 @@ const pendingIceCandidates = new Map();
 export function testStunServer() {
   return new Promise((resolve) => {
     try {
-      const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       let resolved = false;
       const timeout = setTimeout(() => {
         if (!resolved) {
@@ -201,7 +218,7 @@ export async function initiateWebRTCConnection(targetPeerId) {
 
   roomStore.update(s => ({ ...s, webrtcStatus: 'connecting' }));
 
-  const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
   peerConnections.set(targetPeerId, pc);
 
   // Set 8-second fallback timeout for firewall / NAT blocks
@@ -210,7 +227,7 @@ export async function initiateWebRTCConnection(targetPeerId) {
       console.warn(`[WebRTC] Connection to ${targetPeerId} timed out after 8s (STUN / Firewall block)`);
       roomStore.update(s => ({ ...s, webrtcStatus: 'failed' }));
     }
-  }, 8000);
+  }, 15000);
   connectionTimers.set(targetPeerId, timer);
 
   pc.onicecandidate = (event) => {
@@ -269,7 +286,7 @@ export async function handleWebRTCOffer(payload) {
 
   roomStore.update(s => ({ ...s, webrtcStatus: 'connecting' }));
 
-  const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
   peerConnections.set(senderPeerId, pc);
 
   const timer = setTimeout(() => {
@@ -277,7 +294,7 @@ export async function handleWebRTCOffer(payload) {
       console.warn(`[WebRTC] Connection from ${senderPeerId} timed out after 8s`);
       roomStore.update(s => ({ ...s, webrtcStatus: 'failed' }));
     }
-  }, 8000);
+  }, 15000);
   connectionTimers.set(senderPeerId, timer);
 
   pc.onicecandidate = (event) => {
