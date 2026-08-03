@@ -8,26 +8,65 @@ import { roomStore } from '../stores/roomStore.js';
 import { handleIncomingMetadata, handleIncomingChunk, handleTransferAck } from './fileStreamer.js';
 import { get } from 'svelte/store';
 
-const ICE_SERVERS = [
-  // STUN (discover public IP)
+const METERED_DOMAIN = 'firese.metered.live';
+const METERED_API_KEY = '5ed1e15eca27a32b5895cf4d9178dc684d1c';
+
+const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
-  // Metered Open Relay TURN — free 20GB/mo, static auth, ports 80/443 bypass firewalls
+  { urls: 'stun:stun.relay.metered.ca:80' },
   {
-    urls: 'turn:standard.relay.metered.ca:80',
-    username: 'e8dd65b92f60fede1df78e11',
-    credential: '2jMX+JaOy2GeLlKf'
+    urls: 'turn:global.relay.metered.ca:80',
+    username: 'afd64327bce14ac6bf57c697',
+    credential: 't05Eww7vTkTMAx7'
   },
   {
-    urls: 'turn:standard.relay.metered.ca:443',
-    username: 'e8dd65b92f60fede1df78e11',
-    credential: '2jMX+JaOy2GeLlKf'
+    urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+    username: 'afd64327bce14ac6bf57c697',
+    credential: 't05Eww7vTkTMAx7'
   },
   {
-    urls: 'turns:standard.relay.metered.ca:443?transport=tcp',
-    username: 'e8dd65b92f60fede1df78e11',
-    credential: '2jMX+JaOy2GeLlKf'
+    urls: 'turn:global.relay.metered.ca:443',
+    username: 'afd64327bce14ac6bf57c697',
+    credential: 't05Eww7vTkTMAx7'
+  },
+  {
+    urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+    username: 'afd64327bce14ac6bf57c697',
+    credential: 't05Eww7vTkTMAx7'
   }
 ];
+
+/** @type {RTCIceServer[] | null} */
+let cachedIceServers = null;
+let lastFetchTime = 0;
+
+/**
+ * Fetch dedicated ICE/TURN servers dynamically from Metered API with 5-minute cache
+ * @returns {Promise<RTCIceServer[]>}
+ */
+export async function getIceServers() {
+  const now = Date.now();
+  if (cachedIceServers && (now - lastFetchTime < 300000)) {
+    return cachedIceServers;
+  }
+
+  try {
+    const res = await fetch(`https://${METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`);
+    if (res.ok) {
+      const fetchedServers = await res.json();
+      if (Array.isArray(fetchedServers) && fetchedServers.length > 0) {
+        cachedIceServers = fetchedServers;
+        lastFetchTime = now;
+        console.log('[WebRTC] Successfully loaded Metered TURN servers:', cachedIceServers);
+        return cachedIceServers;
+      }
+    }
+  } catch (err) {
+    console.warn('[WebRTC] Failed to fetch Metered TURN credentials, using fallback:', err);
+  }
+
+  return DEFAULT_ICE_SERVERS;
+}
 
 /** @type {Map<string, RTCPeerConnection>} */
 const peerConnections = new Map();
@@ -46,9 +85,10 @@ const pendingIceCandidates = new Map();
  * @returns {Promise<{ success: boolean, candidate?: string, error?: string }>}
  */
 export function testStunServer() {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     try {
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const iceServers = await getIceServers();
+      const pc = new RTCPeerConnection({ iceServers });
       let resolved = false;
       const timeout = setTimeout(() => {
         if (!resolved) {
@@ -218,7 +258,8 @@ export async function initiateWebRTCConnection(targetPeerId) {
 
   roomStore.update(s => ({ ...s, webrtcStatus: 'connecting' }));
 
-  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const iceServers = await getIceServers();
+  const pc = new RTCPeerConnection({ iceServers });
   peerConnections.set(targetPeerId, pc);
 
   // Set 8-second fallback timeout for firewall / NAT blocks
@@ -286,7 +327,8 @@ export async function handleWebRTCOffer(payload) {
 
   roomStore.update(s => ({ ...s, webrtcStatus: 'connecting' }));
 
-  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const iceServers = await getIceServers();
+  const pc = new RTCPeerConnection({ iceServers });
   peerConnections.set(senderPeerId, pc);
 
   const timer = setTimeout(() => {
