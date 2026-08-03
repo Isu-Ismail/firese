@@ -10,6 +10,7 @@ import (
 	"firese-server/ws"
 )
 
+
 func main() {
 	cfg := config.LoadConfig()
 	hub := room.NewHub()
