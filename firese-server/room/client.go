@@ -31,7 +31,7 @@ func NewClient(id string, room *Room, conn *websocket.Conn) *Client {
 		ID:     id,
 		Room:   room,
 		Conn:   conn,
-		Egress: make(chan EgressMessage, 256),
+		Egress: make(chan EgressMessage, 1024),
 	}
 }
 

@@ -37,7 +37,7 @@ func NewRoom(id string, hub *Hub) *Room {
 		clients:    make(map[string]*Client),
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
-		Broadcast:  make(chan BroadcastPacket, 512),
+		Broadcast:  make(chan BroadcastPacket, 1024),
 	}
 }
 
