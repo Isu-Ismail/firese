@@ -9,18 +9,7 @@ import { get } from 'svelte/store';
 
 const STUN_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun.services.mozilla.com' },
-  {
-    urls: [
-      'turn:openrelay.metered.ca:80',
-      'turn:openrelay.metered.ca:443',
-      'turn:openrelay.metered.ca:443?transport=tcp'
-    ],
-    username: 'openrelay',
-    credential: 'openrelay'
-  }
+  { urls: 'stun:stun1.l.google.com:19302' }
 ];
 
 /** @type {Map<string, RTCPeerConnection>} */
@@ -31,6 +20,9 @@ const dataChannels = new Map();
 
 /** @type {Map<string, any>} */
 const connectionTimers = new Map();
+
+/** @type {Map<string, RTCIceCandidate[]>} */
+const pendingIceCandidates = new Map();
 
 /**
  * Test STUN server connectivity directly over raw UDP without HTTP
@@ -125,6 +117,7 @@ export function removePeerWebRTC(peerId) {
     peerConnections.delete(peerId);
   }
 
+  pendingIceCandidates.delete(peerId);
   updateWebRTCStatus();
 }
 
@@ -145,6 +138,7 @@ export function closeAllWebRTC() {
   });
   peerConnections.clear();
 
+  pendingIceCandidates.clear();
   roomStore.update(s => ({ ...s, webrtcStatus: 'idle' }));
 }
 
@@ -307,6 +301,16 @@ export async function handleWebRTCOffer(payload) {
 
   try {
     await pc.setRemoteDescription(new RTCSessionDescription(payload.offer));
+
+    // Flush any ICE candidates that arrived before remoteDescription was set
+    const queued = pendingIceCandidates.get(senderPeerId);
+    if (queued && queued.length > 0) {
+      for (const candidate of queued) {
+        try { await pc.addIceCandidate(candidate); } catch {}
+      }
+      pendingIceCandidates.delete(senderPeerId);
+    }
+
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
@@ -335,6 +339,15 @@ export async function handleWebRTCAnswer(payload) {
     if (pc.signalingState === 'have-local-offer') {
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(payload.answer));
+
+        // Flush any ICE candidates that arrived before remoteDescription was set
+        const queued = pendingIceCandidates.get(senderPeerId);
+        if (queued && queued.length > 0) {
+          for (const candidate of queued) {
+            try { await pc.addIceCandidate(candidate); } catch {}
+          }
+          pendingIceCandidates.delete(senderPeerId);
+        }
       } catch (err) {
         console.error(`[WebRTC] Failed to set remote answer from ${senderPeerId}:`, err);
       }
@@ -350,11 +363,19 @@ export async function handleWebRTCIce(payload) {
   const senderPeerId = payload.senderPeerId;
   const pc = peerConnections.get(senderPeerId);
   if (pc && payload.candidate) {
-    try {
-      if (pc.remoteDescription && pc.remoteDescription.type) {
-        await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+    const candidate = new RTCIceCandidate(payload.candidate);
+    if (pc.remoteDescription && pc.remoteDescription.type) {
+      // Remote description already set — apply immediately
+      try {
+        await pc.addIceCandidate(candidate);
+      } catch {}
+    } else {
+      // Queue candidate until remoteDescription is set
+      if (!pendingIceCandidates.has(senderPeerId)) {
+        pendingIceCandidates.set(senderPeerId, []);
       }
-    } catch {}
+      pendingIceCandidates.get(senderPeerId).push(candidate);
+    }
   }
 }
 

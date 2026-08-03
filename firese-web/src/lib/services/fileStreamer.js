@@ -31,14 +31,15 @@
  * @property {string} [fileIv]
  */
 
-import { sendWebSocketMessage, getWebSocketBufferedAmount } from './websocket.js';
+import { sendWebSocketMessage, getWebSocketBufferedAmount, waitForWebSocketDrain } from './websocket.js';
 import { sendWebRTCJson, sendWebRTCBinary, isWebRTCReady } from './webrtcService.js';
 import { roomStore } from '../stores/roomStore.js';
 import { deriveRoomKey, encryptText, decryptText, encryptBuffer, decryptBuffer } from './cryptoService.js';
 import { get } from 'svelte/store';
 
-const CHUNK_SIZE = 512 * 1024; // 512KB high-speed binary chunks
-const UI_THROTTLE_MS = 100;    // Throttle UI store updates to max 10 FPS during transfers
+const CHUNK_SIZE_WEBRTC = 512 * 1024;   // 512KB for WebRTC DataChannel (local/fast)
+const CHUNK_SIZE_RELAY  = 64 * 1024;    // 64KB for WebSocket relay (free Render, higher latency)
+const UI_THROTTLE_MS = 100;             // Throttle UI store updates to max 10 FPS during transfers
 
 /** @type {ReceiverState | null} */
 let receiverState = null;
@@ -114,6 +115,7 @@ export async function sendFile(file, targetRecipient = 'group') {
   };
 
   const useWebRTC = state.transportMode === 'webrtc' && isWebRTCReady(targetRecipient);
+  const CHUNK_SIZE = useWebRTC ? CHUNK_SIZE_WEBRTC : CHUNK_SIZE_RELAY;
 
   // 1. Send JSON metadata frame via WebRTC or WebSocket
   if (useWebRTC) {
@@ -126,7 +128,8 @@ export async function sendFile(file, targetRecipient = 'group') {
   let lastUIUpdate = 0;
   const startTime = Date.now();
   activeSenderAckBytes = 0;
-  const WINDOW_SIZE_BYTES = 4 * 1024 * 1024; // 4MB Sliding Window ACK Pacing
+  // Smaller window for relay to prevent buffer bloat on free Render
+  const WINDOW_SIZE_BYTES = useWebRTC ? 4 * 1024 * 1024 : 512 * 1024;
 
   roomStore.update(s => ({
     ...s,
@@ -142,9 +145,9 @@ export async function sendFile(file, targetRecipient = 'group') {
     }
   }));
 
-  // 2. Stream binary 512KB chunks with Strict ACK Flow Control & 1:1 progress sync
+  // 2. Stream binary chunks with ACK Flow Control & backpressure
   while (offset < totalBytes) {
-    // Lockstep Backpressure: If sender is > 4MB ahead of Receiver ACK, pause to lockstep progress
+    // Lockstep Backpressure: If sender is too far ahead of Receiver ACK, pause
     while (offset - activeSenderAckBytes > WINDOW_SIZE_BYTES) {
       await new Promise(r => setTimeout(r, 20));
     }
@@ -155,6 +158,8 @@ export async function sendFile(file, targetRecipient = 'group') {
     if (useWebRTC) {
       sendWebRTCBinary(chunk, targetRecipient);
     } else {
+      // Wait for WS buffer to drain before sending next chunk (relay backpressure)
+      await waitForWebSocketDrain();
       sendWebSocketMessage(chunk);
     }
     offset = end;
@@ -177,7 +182,7 @@ export async function sendFile(file, targetRecipient = 'group') {
       }));
     }
 
-    // High-performance micro-task yielding every 4 chunks (2MB) for maximum TCP throughput
+    // Micro-task yielding every 4 chunks for throughput
     if (offset % (CHUNK_SIZE * 4) === 0) {
       await new Promise(r => setTimeout(r, 0));
     }

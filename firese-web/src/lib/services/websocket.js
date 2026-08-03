@@ -293,6 +293,25 @@ export function getWebSocketBufferedAmount() {
   return socket ? socket.bufferedAmount : 0;
 }
 
+/**
+ * Backpressure-aware drain: wait until WebSocket bufferedAmount drops below threshold
+ * Prevents flooding the relay server (critical for free Render hosting)
+ * @param {number} [threshold=262144] - Buffer threshold in bytes (default 256KB)
+ * @returns {Promise<void>}
+ */
+export function waitForWebSocketDrain(threshold = 256 * 1024) {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!socket || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount <= threshold) {
+        resolve();
+      } else {
+        setTimeout(check, 10);
+      }
+    };
+    check();
+  });
+}
+
 export function disconnectWebSocket() {
   isExplicitDisconnect = true;
   clearTimeout(reconnectTimer);

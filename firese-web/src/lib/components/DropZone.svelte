@@ -20,6 +20,11 @@
 
   $: canInteract = $roomStore.isConnected;
   $: canSendFile = $roomStore.isConnected && $roomStore.peerCount >= 2;
+  $: isRelayExceeded = $roomStore.transportMode === 'websocket' && stagedFile && stagedFile.size > 20 * 1024 * 1024;
+
+  function switchToWebRTC() {
+    roomStore.update(s => ({ ...s, transportMode: 'webrtc' }));
+  }
 
   // Reset fileRecipient to 'group' if selected peer disconnects
   $: if (fileRecipient !== 'group' && $roomStore.peers.length > 0) {
@@ -57,7 +62,7 @@
    */
   async function triggerSend(e) {
     if (e) e.stopPropagation();
-    if (!stagedFile || isTransferring || !canSendFile) return;
+    if (!stagedFile || isTransferring || !canSendFile || isRelayExceeded) return;
 
     const currentFile = stagedFile;
     isTransferring = true;
@@ -501,36 +506,69 @@
           </div>
         </div>
 
-        <!-- Peer Validation Warning if peerCount <= 1 -->
-        {#if !canSendFile}
-          <div class="px-3 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-400 text-xs flex items-center space-x-1.5">
-            <Users class="w-3.5 h-3.5 flex-shrink-0" />
-            <span>Waiting for another peer to join room...</span>
+        <!-- Relay Mode 20MB Exceeded Warning -->
+        {#if isRelayExceeded}
+          <div class="w-full p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-xs flex flex-col items-center space-y-1.5 text-center">
+            <div class="flex items-center space-x-1.5 font-bold">
+              <AlertCircle class="w-4 h-4 text-red-400 flex-shrink-0" />
+              <span>Relay Limit Exceeded (Max 20 MB)</span>
+            </div>
+            <p class="text-[11px] text-gray-300">
+              WebSocket Relay Mode is capped at 20 MB per file. Switch to <strong class="text-fire-400">WebRTC P2P Mode</strong> for unlimited file transfers, or choose a smaller file.
+            </p>
+          </div>
+
+          <!-- Action Buttons for Exceeded Size -->
+          <div class="flex items-center space-x-2 pt-1">
+            <button
+              type="button"
+              on:click|stopPropagation={switchToWebRTC}
+              class="px-4 py-2.5 bg-gradient-to-r from-fire-600 to-fire-500 hover:from-fire-500 hover:to-fire-400 text-white-force font-semibold text-xs sm:text-sm rounded-xl shadow-lg shadow-fire-600/30 flex items-center space-x-2 transition-all cursor-pointer border-none hover:scale-105 active:scale-95"
+            >
+              <Zap class="w-4 h-4 text-amber-400" />
+              <span>Switch to WebRTC P2P</span>
+            </button>
+
+            <button
+              type="button"
+              on:click|stopPropagation={clearStagedFile}
+              class="px-3.5 py-2.5 bg-dark-surface hover:bg-red-500/20 text-gray-300 hover:text-red-400 font-semibold text-xs rounded-xl transition-colors cursor-pointer border-none"
+            >
+              Change File
+            </button>
+          </div>
+        {:else}
+          <!-- Peer Validation Warning if peerCount <= 1 -->
+          {#if !canSendFile}
+            <div class="px-3 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-400 text-xs flex items-center space-x-1.5">
+              <Users class="w-3.5 h-3.5 flex-shrink-0" />
+              <span>Waiting for another peer to join room...</span>
+            </div>
+          {/if}
+
+          <!-- Action Buttons inside DropZone -->
+          <div class="flex items-center space-x-2 pt-1">
+            <button
+              type="button"
+              on:click|stopPropagation={triggerSend}
+              disabled={!canSendFile}
+              title={!canSendFile ? 'Waiting for another peer to join room' : 'Send File'}
+              class="px-5 py-2.5 bg-gradient-to-r from-fire-600 to-fire-500 hover:from-fire-500 hover:to-fire-400 text-white-force font-semibold text-xs sm:text-sm rounded-xl shadow-lg shadow-fire-600/30 flex items-center space-x-2 transition-all cursor-pointer border-none hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+            >
+              <Send class="w-4 h-4 text-white-force" />
+              <span>{canSendFile ? 'Send File' : 'Waiting for Peer...'}</span>
+            </button>
+
+            <button
+              type="button"
+              on:click|stopPropagation={clearStagedFile}
+              title="Remove File"
+              class="p-2.5 bg-dark-surface hover:bg-red-500/20 text-gray-400 hover:text-red-400 rounded-xl transition-colors cursor-pointer border-none"
+            >
+              <X class="w-4 h-4" />
+            </button>
           </div>
         {/if}
-
-        <!-- Action Buttons inside DropZone -->
-        <div class="flex items-center space-x-2 pt-1">
-          <button
-            type="button"
-            on:click|stopPropagation={triggerSend}
-            disabled={!canSendFile}
-            title={!canSendFile ? 'Waiting for another peer to join room' : 'Send File'}
-            class="px-5 py-2.5 bg-gradient-to-r from-fire-600 to-fire-500 hover:from-fire-500 hover:to-fire-400 text-white-force font-semibold text-xs sm:text-sm rounded-xl shadow-lg shadow-fire-600/30 flex items-center space-x-2 transition-all cursor-pointer border-none hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
-          >
-            <Send class="w-4 h-4 text-white-force" />
-            <span>{canSendFile ? 'Send File' : 'Waiting for Peer...'}</span>
-          </button>
-
-          <button
-            type="button"
-            on:click|stopPropagation={clearStagedFile}
-            title="Remove File"
-            class="p-2.5 bg-dark-surface hover:bg-red-500/20 text-gray-400 hover:text-red-400 rounded-xl transition-colors cursor-pointer border-none"
-          >
-            <X class="w-4 h-4" />
-          </button>
-        </div>
       </div>
 
     {:else}
