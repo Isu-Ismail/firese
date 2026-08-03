@@ -12,23 +12,7 @@ const METERED_DOMAIN = 'firese.metered.live';
 const METERED_API_KEY = '5ed1e15eca27a32b5895cf4d9178dc684d1c';
 
 const DEFAULT_ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun.relay.metered.ca:80' },
-  {
-    urls: 'turn:global.relay.metered.ca:80',
-    username: 'afd64327bce14ac6bf57c697',
-    credential: 't05Eww7vTkTMAx7'
-  },
-  {
-    urls: 'turn:global.relay.metered.ca:80?transport=tcp',
-    username: 'afd64327bce14ac6bf57c697',
-    credential: 't05Eww7vTkTMAx7'
-  },
-  {
-    urls: 'turn:global.relay.metered.ca:443',
-    username: 'afd64327bce14ac6bf57c697',
-    credential: 't05Eww7vTkTMAx7'
-  },
   {
     urls: 'turns:global.relay.metered.ca:443?transport=tcp',
     username: 'afd64327bce14ac6bf57c697',
@@ -55,9 +39,14 @@ export async function getIceServers() {
     if (res.ok) {
       const fetchedServers = await res.json();
       if (Array.isArray(fetchedServers) && fetchedServers.length > 0) {
-        cachedIceServers = fetchedServers;
+        // Keep only STUN + TURNS 443 TCP to prevent 5+ server slowdown warning
+        cachedIceServers = fetchedServers.filter(s => {
+          const u = Array.isArray(s.urls) ? s.urls.join('') : (s.urls || '');
+          return u.includes('stun') || u.includes('443') || u.includes('tcp');
+        }).slice(0, 3);
+
         lastFetchTime = now;
-        console.log('[WebRTC] Successfully loaded Metered TURN servers:', cachedIceServers);
+        console.log('[WebRTC] Successfully loaded Metered TURN servers (Streamlined):', cachedIceServers);
         return cachedIceServers;
       }
     }
@@ -259,13 +248,16 @@ export async function initiateWebRTCConnection(targetPeerId) {
   roomStore.update(s => ({ ...s, webrtcStatus: 'connecting' }));
 
   const iceServers = await getIceServers();
-  const pc = new RTCPeerConnection({ iceServers });
+  const pc = new RTCPeerConnection({
+    iceServers,
+    iceCandidatePoolSize: 10
+  });
   peerConnections.set(targetPeerId, pc);
 
-  // Set 8-second fallback timeout for firewall / NAT blocks
+  // Set 15-second fallback timeout for firewall / NAT blocks
   const timer = setTimeout(() => {
     if (pc.connectionState !== 'connected' && pc.iceConnectionState !== 'connected') {
-      console.warn(`[WebRTC] Connection to ${targetPeerId} timed out after 8s (STUN / Firewall block)`);
+      console.warn(`[WebRTC] Connection to ${targetPeerId} timed out after 15s. Auto-falling back to WebSocket Relay...`);
       roomStore.update(s => ({ ...s, webrtcStatus: 'failed' }));
     }
   }, 15000);
@@ -273,6 +265,12 @@ export async function initiateWebRTCConnection(targetPeerId) {
 
   pc.onicecandidate = (event) => {
     if (event.candidate) {
+      const candidateStr = event.candidate.candidate;
+      if (candidateStr.includes('relay')) {
+        console.log('[WebRTC] 🌐 TURN Relay candidate gathered:', candidateStr);
+      } else if (candidateStr.includes('srflx')) {
+        console.log('[WebRTC] 📡 STUN candidate gathered:', candidateStr);
+      }
       const state = get(roomStore);
       sendWebSocketMessage({
         type: 'webrtc_ice',
@@ -328,7 +326,10 @@ export async function handleWebRTCOffer(payload) {
   roomStore.update(s => ({ ...s, webrtcStatus: 'connecting' }));
 
   const iceServers = await getIceServers();
-  const pc = new RTCPeerConnection({ iceServers });
+  const pc = new RTCPeerConnection({
+    iceServers,
+    iceCandidatePoolSize: 10
+  });
   peerConnections.set(senderPeerId, pc);
 
   const timer = setTimeout(() => {
@@ -341,6 +342,12 @@ export async function handleWebRTCOffer(payload) {
 
   pc.onicecandidate = (event) => {
     if (event.candidate) {
+      const candidateStr = event.candidate.candidate;
+      if (candidateStr.includes('relay')) {
+        console.log('[WebRTC] 🌐 TURN Relay candidate gathered:', candidateStr);
+      } else if (candidateStr.includes('srflx')) {
+        console.log('[WebRTC] 📡 STUN candidate gathered:', candidateStr);
+      }
       const state = get(roomStore);
       sendWebSocketMessage({
         type: 'webrtc_ice',
