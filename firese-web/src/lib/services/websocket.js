@@ -8,6 +8,9 @@ import { get } from 'svelte/store';
 
 /** @type {WebSocket | null} */
 let socket = null;
+let isExplicitDisconnect = false;
+/** @type {any} */
+let reconnectTimer = null;
 
 /** @type {any} */
 let idlePeerTimer = null;
@@ -111,6 +114,7 @@ export function broadcastSelfPeerInfo() {
 export function connectWebSocket(roomId) {
   if (!roomId || !roomId.trim()) return null;
 
+  isExplicitDisconnect = false;
   const cleanRoomId = roomId.trim();
 
   if (socket) {
@@ -241,6 +245,17 @@ export function connectWebSocket(roomId) {
     manageIdlePeerTimer(false, 0);
     closeAllWebRTC();
     roomStore.update(s => ({ ...s, isConnected: false, isConnecting: false, peerCount: 0, peers: [] }));
+
+    if (!isExplicitDisconnect && cleanRoomId) {
+      console.log('[WebSocket] Mobile network drop detected. Auto-reconnecting in 1.5s...');
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        const state = get(roomStore);
+        if (!state.isConnected && state.roomId === cleanRoomId && !isExplicitDisconnect) {
+          connectWebSocket(cleanRoomId);
+        }
+      }, 1500);
+    }
   };
 
   /**
@@ -277,6 +292,8 @@ export function getWebSocketBufferedAmount() {
 }
 
 export function disconnectWebSocket() {
+  isExplicitDisconnect = true;
+  clearTimeout(reconnectTimer);
   if (socket && socket.readyState === WebSocket.OPEN) {
     const state = get(roomStore);
     try {

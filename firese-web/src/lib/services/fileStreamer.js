@@ -142,13 +142,11 @@ export async function sendFile(file, targetRecipient = 'group') {
     }
   }));
 
-  // 2. Stream binary 512KB chunks with Sliding Window ACK flow control & progress sync
+  // 2. Stream binary 512KB chunks with Sliding Window ACK flow control & 1:1 progress sync
   while (offset < totalBytes) {
-    // Sliding Window ACK Backpressure: If sender is > 4MB ahead of Receiver ACK, pause to lockstep progress
-    let ackTimeoutCounter = 0;
-    while (!useWebRTC && (offset - activeSenderAckBytes > WINDOW_SIZE_BYTES) && ackTimeoutCounter < 200) {
-      await new Promise(r => setTimeout(r, 20));
-      ackTimeoutCounter++;
+    // Lockstep Backpressure: If sender is > 4MB ahead of Receiver ACK, pause to lockstep progress
+    while (!useWebRTC && (offset - activeSenderAckBytes > WINDOW_SIZE_BYTES)) {
+      await new Promise(r => setTimeout(r, 25));
     }
 
     const end = Math.min(offset + CHUNK_SIZE, totalBytes);
@@ -165,7 +163,7 @@ export async function sendFile(file, targetRecipient = 'group') {
     if (now - lastUIUpdate >= UI_THROTTLE_MS || offset === totalBytes) {
       lastUIUpdate = now;
       const elapsedTime = (now - startTime) / 1000 || 0.001;
-      const currentBytes = useWebRTC ? offset : Math.min(offset, Math.max(offset - WINDOW_SIZE_BYTES, activeSenderAckBytes));
+      const currentBytes = useWebRTC ? offset : Math.min(offset, activeSenderAckBytes);
       const rawProgress = Math.min(99, Math.round((currentBytes / totalBytes) * 99));
       const speed = (currentBytes / (1024 * 1024)) / elapsedTime;
 
@@ -185,6 +183,15 @@ export async function sendFile(file, targetRecipient = 'group') {
     }
   }
 
+  // 3. STRICT LOCKSTEP COMPLETION: Wait for receiver to confirm 100% receipt before completing sender UI
+  if (!useWebRTC) {
+    let waitAckCounter = 0;
+    while (activeSenderAckBytes < totalBytes && activeSenderAckCallback && waitAckCounter < 600) {
+      await new Promise(r => setTimeout(r, 50));
+      waitAckCounter++;
+    }
+  }
+
   /** @type {import('../stores/roomStore.js').TransferItem} */
   const completedItem = {
     name: file.name,
@@ -196,28 +203,16 @@ export async function sendFile(file, targetRecipient = 'group') {
     type: 'sent'
   };
 
-  // Wait briefly for receiver ACK or timeout after 3 seconds
-  let ackReceived = false;
-  const ackTimeout = setTimeout(() => {
-    if (!ackReceived) {
-      roomStore.update(s => ({
-        ...s,
-        activeTransfer: null,
-        transfersHistory: [completedItem, ...s.transfersHistory]
-      }));
-    }
-  }, 3000);
-
-  // Store completion handler callback
-  activeSenderAckCallback = () => {
-    ackReceived = true;
-    clearTimeout(ackTimeout);
+  if (activeSenderAckCallback) {
+    activeSenderAckCallback();
+    activeSenderAckCallback = null;
+  } else {
     roomStore.update(s => ({
       ...s,
       activeTransfer: null,
       transfersHistory: [completedItem, ...s.transfersHistory]
     }));
-  };
+  }
 }
 
 /** @type {(() => void) | null} */
