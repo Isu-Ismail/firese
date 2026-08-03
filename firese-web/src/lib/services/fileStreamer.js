@@ -221,16 +221,6 @@ export async function sendFile(file, targetRecipient = 'group') {
       break;
     }
 
-    if (!useWebRTC) {
-      // Lockstep Backpressure only in WebSocket Relay mode
-      while (offset - activeSenderAckBytes > WINDOW_SIZE_BYTES) {
-        if (isTransferCancelled) break;
-        await new Promise(r => setTimeout(r, 20));
-      }
-    }
-
-    if (isTransferCancelled) break;
-
     const end = Math.min(offset + CHUNK_SIZE, totalBytes);
     const chunk = streamingBuffer.slice(offset, end);
 
@@ -240,7 +230,7 @@ export async function sendFile(file, targetRecipient = 'group') {
       sendWebRTCBinary(chunk, targetRecipient);
     } else {
       // Wait for WS buffer to drain before sending next chunk
-      await waitForWebSocketDrain();
+      await waitForWebSocketDrain(256 * 1024);
       sendWebSocketMessage(chunk);
     }
     offset = end;
@@ -249,10 +239,8 @@ export async function sendFile(file, targetRecipient = 'group') {
     if (now - lastUIUpdate >= UI_THROTTLE_MS || offset === totalBytes) {
       lastUIUpdate = now;
       const elapsedTime = (now - startTime) / 1000 || 0.001;
-      const ackBytes = activeSenderAckBytes > 0 ? activeSenderAckBytes : offset;
-      const currentBytes = Math.min(offset, ackBytes);
-      const rawProgress = Math.min(99, Math.round((currentBytes / totalBytes) * 99));
-      const calculatedSpeed = (currentBytes / (1024 * 1024)) / elapsedTime;
+      const rawProgress = Math.min(99, Math.round((offset / totalBytes) * 99));
+      const calculatedSpeed = (offset / (1024 * 1024)) / elapsedTime;
 
       roomStore.update(s => ({
         ...s,
@@ -501,7 +489,7 @@ export async function handleIncomingMetadata(meta) {
     lastUIUpdate: 0,
     key: roomKey,
     fileIv: meta.fileIv
-  };
+  }; 
  
   // Reset cancellation state on new incoming transfer
   isTransferCancelled = false;
