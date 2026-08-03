@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" class="dark" style="background-color: #0A0D14; color: #F3F4F6;">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Firese • Zero-Storage Peer Relay</title>
+    <script>
+      (function() {
+        try {
+          const theme = localStorage.getItem('firese_theme');
+          if (theme === 'light') {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.classList.add('light');
+            document.documentElement.style.backgroundColor = '#F8FAFC';
+            document.documentElement.style.color = '#0F172A';
+          } else {
+            document.documentElement.classList.remove('light');
+            document.documentElement.classList.add('dark');
+            document.documentElement.style.backgroundColor = '#0A0D14';
+            document.documentElement.style.color = '#F3F4F6';
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/index-FLet3V6-.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-GsT9QYpQ.css">
+  </head>
+  <body style="background-color: inherit; color: inherit; margin: 0; padding: 0;">
+    <div id="app"></div>
+  </body>
+</html>

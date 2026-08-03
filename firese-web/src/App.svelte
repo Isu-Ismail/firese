@@ -5,6 +5,7 @@
   import ChatPanel from './lib/components/ChatPanel.svelte';
   import ThemeSwitcher from './lib/components/ThemeSwitcher.svelte';
   import ServerSettingsModal from './lib/components/ServerSettingsModal.svelte';
+  import FireseLogo from './lib/components/FireseLogo.svelte';
   import { roomStore } from './lib/stores/roomStore.js';
   import { endSessionAndClearCache } from './lib/services/websocket.js';
   import { Flame, ShieldCheck, HardDrive, User, Globe, LogOut, X, Server } from '@lucide/svelte';
@@ -44,9 +45,7 @@
   <header class="w-full max-w-6xl mx-auto flex items-center justify-between gap-2 py-2 px-3 sm:px-4 bg-dark-card rounded-2xl mb-2.5 shadow-lg transition-colors flex-shrink-0 flex-nowrap">
     <!-- Brand Logo + Version Badge -->
     <div class="flex items-center space-x-2.5 flex-shrink-0">
-      <div class="p-1.5 sm:p-2 bg-gradient-to-br from-fire-500 to-fire-700 rounded-xl shadow-md shadow-fire-500/20">
-        <Flame class="w-4 h-4 sm:w-5 sm:h-5 text-white-force" />
-      </div>
+      <FireseLogo size={32} />
       <div class="flex flex-col justify-center leading-tight">
         <h1 class="text-base sm:text-lg font-bold tracking-tight text-white">Firese</h1>
         <div class="text-[10px] sm:text-xs text-fire-500 font-mono font-semibold mt-0.5 flex items-center space-x-1">
