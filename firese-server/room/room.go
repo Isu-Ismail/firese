@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -79,8 +78,8 @@ func (r *Room) Run() {
 
 				select {
 				case client.Egress <- EgressMessage{MessageType: packet.MessageType, Payload: packet.Payload}:
-				case <-time.After(10 * time.Second):
-					log.Printf("[Room %s] Client %s delivery timeout (10s)", r.ID, client.ID)
+				default:
+					log.Printf("[Room %s] Client %s egress full, dropping frame", r.ID, client.ID)
 				}
 			}
 			r.mu.RUnlock()

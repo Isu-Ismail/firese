@@ -25,8 +25,8 @@ type Handler struct {
 
 func NewHandler(hub *room.Hub, cfg *config.Config) *Handler {
 	upgrader := websocket.Upgrader{
-		ReadBufferSize:  1024 * 1024,
-		WriteBufferSize: 1024 * 1024,
+		ReadBufferSize:  2 * 1024 * 1024,
+		WriteBufferSize: 2 * 1024 * 1024,
 		CheckOrigin: func(r *http.Request) bool {
 			// Allow all origins for Render <-> GitHub Pages cross-origin communication
 			return true

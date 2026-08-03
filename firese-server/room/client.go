@@ -11,7 +11,7 @@ const (
 	writeWait      = 10 * time.Second
 	pongWait       = 120 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 10 * 1024 * 1024 // 10MB max frame limit if needed, 64KB normal
+	maxMessageSize = 21 * 1024 * 1024 // 21MB max frame limit (supports 20MB files + encryption overhead)
 )
 
 type EgressMessage struct {
@@ -31,7 +31,7 @@ func NewClient(id string, room *Room, conn *websocket.Conn) *Client {
 		ID:     id,
 		Room:   room,
 		Conn:   conn,
-		Egress: make(chan EgressMessage, 1024),
+		Egress: make(chan EgressMessage, 2048),
 	}
 }
 
