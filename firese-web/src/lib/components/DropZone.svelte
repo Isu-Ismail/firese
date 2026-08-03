@@ -357,8 +357,8 @@
           </div>
         </div>
 
-        <div class="text-[11px] text-gray-500 font-mono">
-          64KB Encrypted Chunks • AES-256 E2EE
+        <div class="text-[11px] text-gray-400 font-mono">
+          {$roomStore.activeTransfer.useWebRTC ? `${$roomStore.activeTransfer.chunkSizeLabel || '8MB'} Direct P2P Chunks` : '64KB Encrypted Relay Chunks'} • AES-256 E2EE
         </div>
 
         <!-- Cancel Stream Button -->

@@ -10,6 +10,7 @@ let totalSize = 0;
 let startTime = 0;
 let lastUIUpdate = 0;
 let fileMeta = null;
+let isCancelled = false;
 
 self.onmessage = async function(e) {
   const data = e.data;
@@ -22,12 +23,15 @@ self.onmessage = async function(e) {
     totalSize = fileMeta.size || 0;
     startTime = Date.now();
     lastUIUpdate = 0;
+    isCancelled = false;
 
     self.postMessage({
       type: 'started',
       meta: fileMeta
     });
   } else if (data.type === 'chunk') {
+    if (isCancelled) return;
+
     /** @type {ArrayBuffer} */
     const chunk = data.chunk;
     chunks.push(chunk);
@@ -49,7 +53,7 @@ self.onmessage = async function(e) {
       });
     }
 
-    if (totalSize > 0 && receivedBytes >= totalSize) {
+    if (!isCancelled && totalSize > 0 && receivedBytes >= totalSize) {
       self.postMessage({
         type: 'assembly_start'
       });
@@ -64,13 +68,16 @@ self.onmessage = async function(e) {
 
       chunks = [];
 
-      self.postMessage({
-        type: 'complete',
-        buffer: combinedBuffer.buffer,
-        meta: fileMeta
-      });
+      if (!isCancelled) {
+        self.postMessage({
+          type: 'complete',
+          buffer: combinedBuffer.buffer,
+          meta: fileMeta
+        });
+      }
     }
   } else if (data.type === 'reset') {
+    isCancelled = true;
     chunks = [];
     receivedBytes = 0;
     totalSize = 0;

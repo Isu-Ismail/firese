@@ -5,56 +5,22 @@
 
 import { sendWebSocketMessage } from './websocket.js';
 import { roomStore } from '../stores/roomStore.js';
-import { handleIncomingMetadata, handleIncomingChunk, handleTransferAck } from './fileStreamer.js';
+import { handleIncomingMetadata, handleIncomingChunk, handleTransferAck, handleTransferCancel } from './fileStreamer.js';
 import { get } from 'svelte/store';
 
-const METERED_DOMAIN = 'firese.metered.live';
-const METERED_API_KEY = '5ed1e15eca27a32b5895cf4d9178dc684d1c';
-
-const DEFAULT_ICE_SERVERS = [
-  { urls: 'stun:stun.relay.metered.ca:80' },
-  {
-    urls: 'turns:global.relay.metered.ca:443?transport=tcp',
-    username: 'afd64327bce14ac6bf57c697',
-    credential: 't05Eww7vTkTMAx7'
-  }
+const STUN_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' }
 ];
 
-/** @type {RTCIceServer[] | null} */
-let cachedIceServers = null;
-let lastFetchTime = 0;
-
 /**
- * Fetch dedicated ICE/TURN servers dynamically from Metered API with 5-minute cache
+ * Get ICE servers (Pure STUN for direct 0-cost P2P testing)
  * @returns {Promise<RTCIceServer[]>}
  */
 export async function getIceServers() {
-  const now = Date.now();
-  if (cachedIceServers && (now - lastFetchTime < 300000)) {
-    return cachedIceServers;
-  }
-
-  try {
-    const res = await fetch(`https://${METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`);
-    if (res.ok) {
-      const fetchedServers = await res.json();
-      if (Array.isArray(fetchedServers) && fetchedServers.length > 0) {
-        // Keep only STUN + TURNS 443 TCP to prevent 5+ server slowdown warning
-        cachedIceServers = fetchedServers.filter(s => {
-          const u = Array.isArray(s.urls) ? s.urls.join('') : (s.urls || '');
-          return u.includes('stun') || u.includes('443') || u.includes('tcp');
-        }).slice(0, 3);
-
-        lastFetchTime = now;
-        console.log('[WebRTC] Successfully loaded Metered TURN servers (Streamlined):', cachedIceServers);
-        return cachedIceServers;
-      }
-    }
-  } catch (err) {
-    console.warn('[WebRTC] Failed to fetch Metered TURN credentials, using fallback:', err);
-  }
-
-  return DEFAULT_ICE_SERVERS;
+  return STUN_SERVERS;
 }
 
 /** @type {Map<string, RTCPeerConnection>} */
@@ -222,6 +188,8 @@ function setupDataChannel(peerId, dc) {
            await handleIncomingMetadata(payload);
         } else if (payload.type === 'transfer_ack') {
           handleTransferAck(payload);
+        } else if (payload.type === 'transfer_cancel') {
+          handleTransferCancel(payload);
         } else if (payload.type === 'chat_message') {
           // Direct P2P chat message
           roomStore.update(s => ({
@@ -483,33 +451,83 @@ export function sendWebRTCJson(payload, targetPeerId = 'group') {
       sent = true;
     }
   }
-
   return sent;
 }
 
 /**
  * Send binary ArrayBuffer chunk over WebRTC DataChannel(s)
+ * Automatically sub-slices large logical chunks (e.g. 8MB/16MB) into 256KB frames
+ * to prevent browser maxMessageSize errors while maintaining high throughput.
  * @param {ArrayBuffer} chunk
  * @param {string} [targetPeerId]
  * @returns {boolean} Success status
  */
 export function sendWebRTCBinary(chunk, targetPeerId = 'group') {
+  if (!chunk || chunk.byteLength === 0) return false;
   let sent = false;
+  const MAX_FRAME_SIZE = 256 * 1024; // 256KB safe browser protocol frame limit
+
+  const sendToChannel = (/** @type {RTCDataChannel} */ dc) => {
+    if (dc.readyState !== 'open') return;
+    
+    if (chunk.byteLength <= MAX_FRAME_SIZE) {
+      dc.send(chunk);
+    } else {
+      let offset = 0;
+      while (offset < chunk.byteLength) {
+        const end = Math.min(offset + MAX_FRAME_SIZE, chunk.byteLength);
+        const subSlice = chunk.slice(offset, end);
+        dc.send(subSlice);
+        offset = end;
+      }
+    }
+    sent = true;
+  };
 
   if (!targetPeerId || targetPeerId === 'group') {
-    dataChannels.forEach(dc => {
-      if (dc.readyState === 'open') {
-        dc.send(chunk);
-        sent = true;
-      }
-    });
+    dataChannels.forEach(dc => sendToChannel(dc));
   } else {
     const dc = dataChannels.get(targetPeerId);
-    if (dc && dc.readyState === 'open') {
-      dc.send(chunk);
-      sent = true;
-    }
+    if (dc) sendToChannel(dc);
   }
 
   return sent;
+}
+
+/**
+ * Get DataChannel output buffer size in bytes
+ * @param {string} [targetPeerId]
+ * @returns {number}
+ */
+export function getWebRTCBufferedAmount(targetPeerId = 'group') {
+  if (dataChannels.size === 0) return 0;
+  if (!targetPeerId || targetPeerId === 'group') {
+    let max = 0;
+    dataChannels.forEach(dc => {
+      if (dc.bufferedAmount > max) max = dc.bufferedAmount;
+    });
+    return max;
+  }
+  const dc = dataChannels.get(targetPeerId);
+  return dc ? dc.bufferedAmount : 0;
+}
+
+/**
+ * Wait until WebRTC DataChannel output buffer drops below threshold
+ * @param {string} [targetPeerId]
+ * @param {number} [threshold=1048576] - 1MB buffer threshold
+ * @returns {Promise<void>}
+ */
+export function waitForWebRTCDrain(targetPeerId = 'group', threshold = 1024 * 1024) {
+  return new Promise((resolve) => {
+    const check = () => {
+      const buffered = getWebRTCBufferedAmount(targetPeerId);
+      if (buffered <= threshold) {
+        resolve();
+      } else {
+        setTimeout(check, 10);
+      }
+    };
+    check();
+  });
 }

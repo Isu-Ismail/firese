@@ -32,12 +32,12 @@
  */
 
 import { sendWebSocketMessage, getWebSocketBufferedAmount, waitForWebSocketDrain } from './websocket.js';
-import { sendWebRTCJson, sendWebRTCBinary, isWebRTCReady } from './webrtcService.js';
+import { sendWebRTCJson, sendWebRTCBinary, isWebRTCReady, waitForWebRTCDrain } from './webrtcService.js';
 import { roomStore } from '../stores/roomStore.js';
 import { deriveRoomKey, encryptText, decryptText, encryptBuffer, decryptBuffer } from './cryptoService.js';
 import { get } from 'svelte/store';
 
-const CHUNK_SIZE_WEBRTC = 512 * 1024;   // 512KB for WebRTC DataChannel (local/fast)
+const CHUNK_SIZE_WEBRTC = 1024 * 1024; // 1MB high-speed WebRTC binary chunks
 const CHUNK_SIZE_RELAY  = 64 * 1024;    // 64KB for WebSocket relay (free Render, higher latency)
 const UI_THROTTLE_MS = 100;             // Throttle UI store updates to max 10 FPS during transfers
 
@@ -47,16 +47,80 @@ let receiverState = null;
 /** @type {ArrayBuffer[]} */
 let earlyBuffer = [];
 
+let isTransferCancelled = false;
+
 /**
- * Abort active transfer and clear file streamer state
+ * Abort active transfer locally & broadcast cancellation signal to remote peer(s)
+ * Clears worker memory buffers on both sides
  */
 export function cancelFileTransfer() {
+  isTransferCancelled = true;
+
+  const state = get(roomStore);
+  const myPeerId = state.userProfile.peerId;
+  const targetPeerId = receiverState?.senderPeerId || state.activeTransfer?.targetPeerId || 'group';
+
+  const cancelPayload = {
+    type: 'transfer_cancel',
+    senderPeerId: myPeerId,
+    targetPeerId
+  };
+
+  const useWebRTC = state.transportMode === 'webrtc' && isWebRTCReady(targetPeerId);
+  if (useWebRTC) {
+    sendWebRTCJson(cancelPayload, targetPeerId);
+  } else {
+    sendWebSocketMessage(cancelPayload);
+  }
+
+  // Clear receiver worker memory
+  const w = getStreamWorker();
+  if (w) w.postMessage({ type: 'reset' });
+
   receiverState = null;
   earlyBuffer = [];
+
   roomStore.update(s => ({
     ...s,
     activeTransfer: null
   }));
+}
+
+/**
+ * Handle incoming transfer_cancel frame from remote peer
+ * @param {any} payload
+ */
+export function handleTransferCancel(payload) {
+  isTransferCancelled = true;
+
+  // Clear receiver worker memory
+  const w = getStreamWorker();
+  if (w) w.postMessage({ type: 'reset' });
+
+  receiverState = null;
+  earlyBuffer = [];
+
+  roomStore.update(s => ({
+    ...s,
+    activeTransfer: null
+  }));
+}
+
+/**
+ * Dynamically calculate optimal WebRTC chunk size based on total file size
+ * @param {number} fileSizeInBytes
+ * @returns {number} Chunk size in bytes
+ */
+function calculateWebRTCChunkSize(fileSizeInBytes) {
+  if (fileSizeInBytes < 10 * 1024 * 1024) {
+    return 512 * 1024;      // 512KB for small files (< 10MB)
+  } else if (fileSizeInBytes < 100 * 1024 * 1024) {
+    return 2 * 1024 * 1024;  // 2MB for medium files (10MB - 100MB)
+  } else if (fileSizeInBytes < 500 * 1024 * 1024) {
+    return 8 * 1024 * 1024;  // 8MB for large files (100MB - 500MB)
+  } else {
+    return 16 * 1024 * 1024; // 16MB for massive files (> 500MB)
+  }
 }
 
 /**
@@ -115,7 +179,10 @@ export async function sendFile(file, targetRecipient = 'group') {
   };
 
   const useWebRTC = state.transportMode === 'webrtc' && isWebRTCReady(targetRecipient);
-  const CHUNK_SIZE = useWebRTC ? CHUNK_SIZE_WEBRTC : CHUNK_SIZE_RELAY;
+  const CHUNK_SIZE = useWebRTC ? calculateWebRTCChunkSize(totalBytes) : CHUNK_SIZE_RELAY;
+  const chunkSizeLabel = useWebRTC ? `${(CHUNK_SIZE / (1024 * 1024)).toFixed(CHUNK_SIZE >= 1024 * 1024 ? 0 : 1)}MB` : '64KB';
+
+  isTransferCancelled = false;
 
   // 1. Send JSON metadata frame via WebRTC or WebSocket
   if (useWebRTC) {
@@ -128,8 +195,7 @@ export async function sendFile(file, targetRecipient = 'group') {
   let lastUIUpdate = 0;
   const startTime = Date.now();
   activeSenderAckBytes = 0;
-  // Smaller window for relay to prevent buffer bloat on free Render
-  const WINDOW_SIZE_BYTES = useWebRTC ? 4 * 1024 * 1024 : 512 * 1024;
+  const WINDOW_SIZE_BYTES = 512 * 1024;
 
   roomStore.update(s => ({
     ...s,
@@ -139,26 +205,41 @@ export async function sendFile(file, targetRecipient = 'group') {
       mime: fileMeta.mime,
       sender: senderName,
       senderPeerId: myPeerId,
+      targetPeerId: targetRecipient,
       progress: 0,
       speed: '0.00',
-      isSending: true
+      isSending: true,
+      useWebRTC,
+      chunkSizeLabel
     }
   }));
 
-  // 2. Stream binary chunks with ACK Flow Control & backpressure
+  // 2. Stream binary chunks
   while (offset < totalBytes) {
-    // Lockstep Backpressure: If sender is too far ahead of Receiver ACK, pause
-    while (offset - activeSenderAckBytes > WINDOW_SIZE_BYTES) {
-      await new Promise(r => setTimeout(r, 20));
+    if (isTransferCancelled) {
+      console.log('[FileStreamer] Send loop aborted via cancel signal');
+      break;
     }
+
+    if (!useWebRTC) {
+      // Lockstep Backpressure only in WebSocket Relay mode
+      while (offset - activeSenderAckBytes > WINDOW_SIZE_BYTES) {
+        if (isTransferCancelled) break;
+        await new Promise(r => setTimeout(r, 20));
+      }
+    }
+
+    if (isTransferCancelled) break;
 
     const end = Math.min(offset + CHUNK_SIZE, totalBytes);
     const chunk = streamingBuffer.slice(offset, end);
 
     if (useWebRTC) {
+      // DataChannel output buffer backpressure (max 2MB ahead of network socket)
+      await waitForWebRTCDrain(targetRecipient, 2 * 1024 * 1024);
       sendWebRTCBinary(chunk, targetRecipient);
     } else {
-      // Wait for WS buffer to drain before sending next chunk (relay backpressure)
+      // Wait for WS buffer to drain before sending next chunk
       await waitForWebSocketDrain();
       sendWebSocketMessage(chunk);
     }
@@ -168,7 +249,8 @@ export async function sendFile(file, targetRecipient = 'group') {
     if (now - lastUIUpdate >= UI_THROTTLE_MS || offset === totalBytes) {
       lastUIUpdate = now;
       const elapsedTime = (now - startTime) / 1000 || 0.001;
-      const currentBytes = Math.min(offset, activeSenderAckBytes);
+      const ackBytes = activeSenderAckBytes > 0 ? activeSenderAckBytes : offset;
+      const currentBytes = Math.min(offset, ackBytes);
       const rawProgress = Math.min(99, Math.round((currentBytes / totalBytes) * 99));
       const calculatedSpeed = (currentBytes / (1024 * 1024)) / elapsedTime;
 
@@ -182,7 +264,7 @@ export async function sendFile(file, targetRecipient = 'group') {
       }));
     }
 
-    // Micro-task yielding every 4 chunks for throughput
+    // Micro-task yielding every 4 chunks for event loop responsiveness
     if (offset % (CHUNK_SIZE * 4) === 0) {
       await new Promise(r => setTimeout(r, 0));
     }
@@ -263,13 +345,21 @@ function getStreamWorker() {
 
       if (data.type === 'progress') {
         if (receiverState && receiverState.senderPeerId) {
-          sendWebSocketMessage({
+          const ackMsg = {
             type: 'transfer_ack',
             targetPeerId: receiverState.senderPeerId,
             progress: data.progress,
             speed: data.speed,
             receivedBytes: data.receivedBytes
-          });
+          };
+
+          const state = get(roomStore);
+          const useWebRTC = state.transportMode === 'webrtc' && isWebRTCReady(receiverState.senderPeerId);
+          if (useWebRTC) {
+            sendWebRTCJson(ackMsg, receiverState.senderPeerId);
+          } else {
+            sendWebSocketMessage(ackMsg);
+          }
         }
 
         roomStore.update(s => ({
@@ -292,12 +382,19 @@ function getStreamWorker() {
         }));
       } else if (data.type === 'complete') {
         if (receiverState.senderPeerId) {
-          sendWebSocketMessage({
+          const completeAck = {
             type: 'transfer_ack',
             targetPeerId: receiverState.senderPeerId,
             progress: 100,
             status: 'complete'
-          });
+          };
+          const state = get(roomStore);
+          const useWebRTC = state.transportMode === 'webrtc' && isWebRTCReady(receiverState.senderPeerId);
+          if (useWebRTC) {
+            sendWebRTCJson(completeAck, receiverState.senderPeerId);
+          } else {
+            sendWebSocketMessage(completeAck);
+          }
         }
 
         let finalBuffer = data.buffer;
@@ -406,6 +503,9 @@ export async function handleIncomingMetadata(meta) {
     fileIv: meta.fileIv
   };
 
+  // Reset cancellation state on new incoming transfer
+  isTransferCancelled = false;
+
   const w = getStreamWorker();
   if (w) {
     w.postMessage({
@@ -447,6 +547,8 @@ export async function handleIncomingMetadata(meta) {
  * @param {ArrayBuffer} arrayBuffer
  */
 export async function handleIncomingChunk(arrayBuffer) {
+  if (isTransferCancelled) return;
+
   if (!receiverState || receiverState.size <= 0) {
     earlyBuffer.push(arrayBuffer);
     return;

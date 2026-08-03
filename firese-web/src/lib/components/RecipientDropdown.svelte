@@ -73,7 +73,7 @@
         {@const isPeerSelected = selected === peer.peerId || selected === peer.nickname}
         <button
           type="button"
-          on:click|stopPropagation={() => selectRecipient(peer.peerId || peer.nickname)}
+          on:click|stopPropagation={() => selectRecipient(peer.peerId)}
           class="w-full text-left px-3.5 py-2.5 font-medium flex items-center space-x-2 transition-colors border-none cursor-pointer group
             {idx < $roomStore.peers.length - 1 ? 'border-b border-gray-700/40' : ''}
             {isPeerSelected

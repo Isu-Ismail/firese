@@ -43,7 +43,7 @@
     if (!chatContainer) return;
     const { scrollTop, scrollHeight, clientHeight } = chatContainer;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    userScrolledUp = distanceFromBottom > 60;
+    userScrolledUp = distanceFromBottom > 20;
   }
 
   function scrollToBottom() {
@@ -132,11 +132,11 @@
 
   <!-- Messages List Outer Container -->
   <div class="relative flex-1 min-h-0 mb-2 z-10">
-    <!-- Hidden Scrollbar Message List -->
+    <!-- Touchscreen-Friendly Scrollable Message List -->
     <div
       bind:this={chatContainer}
       on:scroll={handleScroll}
-      class="h-full overflow-y-auto space-y-2.5 pr-1 scroll-smooth [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+      class="h-full overflow-y-auto space-y-2.5 pr-1 scroll-smooth overscroll-contain [touch-action:pan-y] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
     >
       {#if !canInteract}
         <div class="h-full flex flex-col items-center justify-center text-center text-gray-400 text-xs sm:text-sm space-y-2 p-4">

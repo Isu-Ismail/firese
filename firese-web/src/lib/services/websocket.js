@@ -1,5 +1,5 @@
 import { roomStore, generatePeerId } from '../stores/roomStore.js';
-import { handleIncomingChunk, handleIncomingMetadata, handleTransferAck } from './fileStreamer.js';
+import { handleIncomingChunk, handleIncomingMetadata, handleTransferAck, handleTransferCancel } from './fileStreamer.js';
 import { initiateWebRTCConnection, handleWebRTCOffer, handleWebRTCAnswer, handleWebRTCIce, closeAllWebRTC, removePeerWebRTC } from './webrtcService.js';
 import { fetchPublicIp } from './ipService.js';
 import { loadChatHistory, addChatMessage } from './chatService.js';
@@ -169,18 +169,17 @@ export function connectWebSocket(roomId) {
           }
         } else if (data.type === 'peer_leave') {
           const leaveId = data.peerId;
-          const leaveNick = data.nickname;
           if (leaveId) removePeerWebRTC(leaveId);
           roomStore.update(s => ({
             ...s,
-            peers: s.peers.filter(p => (leaveId ? p.peerId !== leaveId : true) && (leaveNick ? p.nickname !== leaveNick : true))
+            peers: s.peers.filter(p => (leaveId ? p.peerId !== leaveId : (data.nickname ? p.nickname !== data.nickname : true)))
           }));
         } else if (data.type === 'peer_info') {
-          const peerId = data.peerId || data.id || ('peer_' + (data.nickname || 'user'));
-          if (data.nickname && data.nickname !== state.userProfile.nickname) {
+          const peerId = data.peerId || data.id;
+          if (peerId && peerId !== state.userProfile.peerId) {
             let isNewPeer = false;
             roomStore.update(s => {
-              const existingIndex = s.peers.findIndex(p => p.peerId === peerId || p.nickname === data.nickname);
+              const existingIndex = s.peers.findIndex(p => p.peerId === peerId);
               const updatedPeers = [...s.peers];
               const peerItem = {
                 peerId: peerId,
@@ -205,6 +204,8 @@ export function connectWebSocket(roomId) {
           }
         } else if (data.type === 'transfer_ack') {
           handleTransferAck(data);
+        } else if (data.type === 'transfer_cancel') {
+          handleTransferCancel(data);
         } else if (data.type === 'webrtc_offer') {
           if (!data.targetPeerId || data.targetPeerId === state.userProfile.peerId) await handleWebRTCOffer(data);
         } else if (data.type === 'webrtc_answer') {
