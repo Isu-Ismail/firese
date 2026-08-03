@@ -1,0 +1,12 @@
+services:
+  firese-server:
+    container_name: firese-server
+    build:
+      context: ./firese-server
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - ALLOWED_ORIGINS=*
+    restart: unless-stopped

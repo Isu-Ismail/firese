@@ -1,0 +1,24 @@
+{
+  "name": "firese-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.5.25",
+    "svelte": "^5.56.8",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.2.0"
+  },
+  "dependencies": {
+    "@lucide/svelte": "^1.28.0",
+    "lucide-svelte": "^1.0.1"
+  }
+}
