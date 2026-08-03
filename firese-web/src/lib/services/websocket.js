@@ -1,6 +1,6 @@
 import { roomStore, generatePeerId } from '../stores/roomStore.js';
-import { handleIncomingChunk, handleIncomingMetadata } from './fileStreamer.js';
-import { initiateWebRTCConnection, handleWebRTCOffer, handleWebRTCAnswer, handleWebRTCIce, closeAllWebRTC } from './webrtcService.js';
+import { handleIncomingChunk, handleIncomingMetadata, handleTransferAck } from './fileStreamer.js';
+import { initiateWebRTCConnection, handleWebRTCOffer, handleWebRTCAnswer, handleWebRTCIce, closeAllWebRTC, removePeerWebRTC } from './webrtcService.js';
 import { fetchPublicIp } from './ipService.js';
 import { loadChatHistory, addChatMessage } from './chatService.js';
 import { deriveRoomKey, decryptText } from './cryptoService.js';
@@ -52,17 +52,7 @@ export function getWebSocketUrl(roomId) {
   }
 
   if (!baseUrl) {
-    baseUrl = import.meta.env.VITE_WS_URL;
-  }
-  
-  if (!baseUrl) {
-    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-    if (isHttps) {
-      baseUrl = 'wss://firese-server.onrender.com/ws';
-    } else {
-      const host = (typeof window !== 'undefined' && window.location.hostname) || 'localhost';
-      baseUrl = `ws://${host}:8080/ws`;
-    }
+    baseUrl = 'wss://firese.onrender.com/ws';
   }
 
   const url = new URL(baseUrl);
@@ -162,11 +152,29 @@ export function connectWebSocket(roomId) {
 
         if (data.type === 'peer_count') {
           const count = typeof data.count === 'number' ? data.count : 1;
-          roomStore.update(s => ({ ...s, peerCount: count }));
+          roomStore.update(s => ({
+            ...s,
+            peerCount: count,
+            peers: count <= 1 ? [] : s.peers
+          }));
           manageIdlePeerTimer(state.isConnected, count);
+
+          // If multiple peers are in room but peers list is incomplete, re-announce identity
+          if (count > 1 && state.peers.length < count - 1) {
+            broadcastSelfPeerInfo();
+          }
+        } else if (data.type === 'peer_leave') {
+          const leaveId = data.peerId;
+          const leaveNick = data.nickname;
+          if (leaveId) removePeerWebRTC(leaveId);
+          roomStore.update(s => ({
+            ...s,
+            peers: s.peers.filter(p => (leaveId ? p.peerId !== leaveId : true) && (leaveNick ? p.nickname !== leaveNick : true))
+          }));
         } else if (data.type === 'peer_info') {
           const peerId = data.peerId || data.id || ('peer_' + (data.nickname || 'user'));
           if (data.nickname && data.nickname !== state.userProfile.nickname) {
+            let isNewPeer = false;
             roomStore.update(s => {
               const existingIndex = s.peers.findIndex(p => p.peerId === peerId || p.nickname === data.nickname);
               const updatedPeers = [...s.peers];
@@ -178,19 +186,19 @@ export function connectWebSocket(roomId) {
               if (existingIndex >= 0) {
                 updatedPeers[existingIndex] = peerItem;
               } else {
+                isNewPeer = true;
                 updatedPeers.push(peerItem);
               }
               return { ...s, peers: updatedPeers };
             });
 
-            // Re-announce self so newly connected peer receives self info
-            broadcastSelfPeerInfo();
-
-            // If WebRTC mode is active, initiate WebRTC P2P DataChannel connection
-            if (state.transportMode === 'webrtc') {
+            // If WebRTC mode is active and it's a new peer, initiate WebRTC P2P DataChannel connection
+            if (isNewPeer && state.transportMode === 'webrtc') {
               initiateWebRTCConnection(peerId);
             }
           }
+        } else if (data.type === 'transfer_ack') {
+          handleTransferAck(data);
         } else if (data.type === 'webrtc_offer') {
           await handleWebRTCOffer(data);
         } else if (data.type === 'webrtc_answer') {
@@ -260,8 +268,27 @@ export function sendWebSocketMessage(data) {
   }
 }
 
+/**
+ * Get current WebSocket output buffer size in bytes for backpressure sync
+ * @returns {number}
+ */
+export function getWebSocketBufferedAmount() {
+  return socket ? socket.bufferedAmount : 0;
+}
+
 export function disconnectWebSocket() {
-  if (socket) {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    const state = get(roomStore);
+    try {
+      socket.send(JSON.stringify({
+        type: 'peer_leave',
+        peerId: state.userProfile.peerId,
+        nickname: state.userProfile.nickname
+      }));
+    } catch {}
+    socket.close();
+    socket = null;
+  } else if (socket) {
     socket.close();
     socket = null;
   }
@@ -308,8 +335,6 @@ export function endSessionAndClearCache() {
 // Silent disconnect on page unload or browser close without wiping stored room code
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
-    if (socket) {
-      socket.close();
-    }
+    disconnectWebSocket();
   });
 }

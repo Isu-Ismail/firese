@@ -5,14 +5,7 @@ import { writable } from 'svelte/store';
  * @returns {string}
  */
 export function generatePeerId() {
-  if (typeof window !== 'undefined') {
-    const saved = sessionStorage.getItem('firese_peer_id');
-    if (saved) return saved;
-    const newId = 'peer_' + Math.random().toString(36).substring(2, 6) + Math.random().toString(36).substring(2, 6);
-    sessionStorage.setItem('firese_peer_id', newId);
-    return newId;
-  }
-  return 'peer_' + Math.random().toString(36).substring(2, 10);
+  return 'peer_' + Math.random().toString(36).substring(2, 6) + Math.random().toString(36).substring(2, 6);
 }
 
 /**

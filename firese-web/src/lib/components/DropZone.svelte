@@ -318,7 +318,7 @@
         <div class="text-center w-full">
           <div class="text-xs font-semibold uppercase tracking-wider text-fire-400 mb-1 flex items-center justify-center space-x-1.5">
             <Zap class="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-            <span>{$roomStore.activeTransfer.isSending ? 'Relaying File Stream...' : 'Receiving Stream...'}</span>
+            <span>{$roomStore.activeTransfer.status || ($roomStore.activeTransfer.isSending ? 'Relaying File Stream...' : 'Receiving Stream...')}</span>
           </div>
 
           <!-- Sender & Target Detail -->

@@ -311,8 +311,8 @@
         title="View Connected Peers"
       >
         <Users class="w-3.5 h-3.5 text-fire-500" />
-        <span class="font-mono font-bold">{$roomStore.peerCount}</span>
-        <span class="hidden sm:inline">{$roomStore.peerCount === 1 ? 'Peer' : 'Peers'}</span>
+        <span class="font-mono font-bold">{1 + $roomStore.peers.length}</span>
+        <span class="hidden sm:inline">{(1 + $roomStore.peers.length) === 1 ? 'Peer' : 'Peers'}</span>
       </button>
     {/if}
 

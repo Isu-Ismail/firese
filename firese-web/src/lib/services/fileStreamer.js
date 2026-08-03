@@ -31,7 +31,7 @@
  * @property {string} [fileIv]
  */
 
-import { sendWebSocketMessage } from './websocket.js';
+import { sendWebSocketMessage, getWebSocketBufferedAmount } from './websocket.js';
 import { sendWebRTCJson, sendWebRTCBinary, isWebRTCReady } from './webrtcService.js';
 import { roomStore } from '../stores/roomStore.js';
 import { deriveRoomKey, encryptText, decryptText, encryptBuffer, decryptBuffer } from './cryptoService.js';
@@ -140,7 +140,7 @@ export async function sendFile(file, targetRecipient = 'group') {
     }
   }));
 
-  // 2. Stream binary 512KB chunks with UI reactivity throttling
+  // 2. Stream binary 512KB chunks with UI reactivity throttling & smooth network pacing
   while (offset < totalBytes) {
     const end = Math.min(offset + CHUNK_SIZE, totalBytes);
     const chunk = streamingBuffer.slice(offset, end);
@@ -156,21 +156,22 @@ export async function sendFile(file, targetRecipient = 'group') {
     if (now - lastUIUpdate >= UI_THROTTLE_MS || offset === totalBytes) {
       lastUIUpdate = now;
       const elapsedTime = (now - startTime) / 1000 || 0.001;
-      const progress = Math.min(100, Math.round((offset / totalBytes) * 100));
+      const rawProgress = Math.min(99, Math.round((offset / totalBytes) * 99));
       const speed = (offset / (1024 * 1024)) / elapsedTime;
 
       roomStore.update(s => ({
         ...s,
         activeTransfer: s.activeTransfer ? {
           ...s.activeTransfer,
-          progress,
+          progress: Math.max(s.activeTransfer.progress || 0, rawProgress),
           speed: speed.toFixed(2)
         } : null
       }));
     }
 
-    if (offset % (CHUNK_SIZE * 8) === 0) {
-      await new Promise(r => setTimeout(r, 0));
+    // Smooth network pacing every 2 chunks (1MB) to ensure socket & Go server channels never drop packets
+    if (offset % (CHUNK_SIZE * 2) === 0) {
+      await new Promise(r => setTimeout(r, 10));
     }
   }
 
@@ -185,11 +186,151 @@ export async function sendFile(file, targetRecipient = 'group') {
     type: 'sent'
   };
 
-  roomStore.update(s => ({
-    ...s,
-    activeTransfer: null,
-    transfersHistory: [completedItem, ...s.transfersHistory]
-  }));
+  // Wait briefly for receiver ACK or timeout after 3 seconds
+  let ackReceived = false;
+  const ackTimeout = setTimeout(() => {
+    if (!ackReceived) {
+      roomStore.update(s => ({
+        ...s,
+        activeTransfer: null,
+        transfersHistory: [completedItem, ...s.transfersHistory]
+      }));
+    }
+  }, 3000);
+
+  // Store completion handler callback
+  activeSenderAckCallback = () => {
+    ackReceived = true;
+    clearTimeout(ackTimeout);
+    roomStore.update(s => ({
+      ...s,
+      activeTransfer: null,
+      transfersHistory: [completedItem, ...s.transfersHistory]
+    }));
+  };
+}
+
+/** @type {(() => void) | null} */
+let activeSenderAckCallback = null;
+
+/**
+ * Handle incoming transfer_ack progress frame from receiver peer
+ * @param {any} ack
+ */
+export function handleTransferAck(ack) {
+  if (!ack) return;
+
+  if (ack.progress !== undefined) {
+    roomStore.update(s => ({
+      ...s,
+      activeTransfer: (s.activeTransfer && s.activeTransfer.isSending) ? {
+        ...s.activeTransfer,
+        progress: Math.max(s.activeTransfer.progress || 0, ack.progress)
+      } : s.activeTransfer
+    }));
+  }
+
+  if (ack.status === 'complete' && activeSenderAckCallback) {
+    activeSenderAckCallback();
+    activeSenderAckCallback = null;
+  }
+}
+
+/** @type {Worker | null} */
+let worker = null;
+
+function getStreamWorker() {
+  if (typeof window === 'undefined') return null;
+  if (!worker) {
+    worker = new Worker(new URL('../workers/streamWorker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = async (e) => {
+      const data = e.data;
+      if (!data || !receiverState) return;
+
+      if (data.type === 'progress') {
+        if (receiverState.senderPeerId) {
+          sendWebSocketMessage({
+            type: 'transfer_ack',
+            targetPeerId: receiverState.senderPeerId,
+            progress: data.progress
+          });
+        }
+
+        roomStore.update(s => ({
+          ...s,
+          activeTransfer: s.activeTransfer ? {
+            ...s.activeTransfer,
+            progress: data.progress,
+            speed: data.speed
+          } : null
+        }));
+      } else if (data.type === 'assembly_start') {
+        roomStore.update(s => ({
+          ...s,
+          activeTransfer: s.activeTransfer ? {
+            ...s.activeTransfer,
+            progress: 100,
+            isProcessing: true,
+            status: 'Decrypting file...'
+          } : null
+        }));
+      } else if (data.type === 'complete') {
+        if (receiverState.senderPeerId) {
+          sendWebSocketMessage({
+            type: 'transfer_ack',
+            targetPeerId: receiverState.senderPeerId,
+            progress: 100,
+            status: 'complete'
+          });
+        }
+
+        let finalBuffer = data.buffer;
+        if (receiverState.key && receiverState.fileIv) {
+          try {
+            finalBuffer = await decryptBuffer(data.buffer, receiverState.fileIv, receiverState.key);
+          } catch (err) {
+            console.error('[E2EE] Background worker file decryption error:', err);
+          }
+        }
+
+        const blob = new Blob([finalBuffer], { type: receiverState.mime });
+        const blobUrl = URL.createObjectURL(blob);
+
+        /** @type {import('../stores/roomStore.js').TransferItem} */
+        const completedItem = {
+          name: receiverState.name,
+          size: receiverState.originalSize || receiverState.size,
+          mime: receiverState.mime,
+          sender: receiverState.sender,
+          senderPeerId: receiverState.senderPeerId,
+          progress: 100,
+          type: 'received',
+          blobUrl
+        };
+
+        // Automatic Download trigger if Auto-Save is ON
+        const autoSaveOn = localStorage.getItem('firese_auto_download') === 'true';
+        if (autoSaveOn && typeof window !== 'undefined') {
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = receiverState.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+
+        receiverState = null;
+
+        roomStore.update(s => ({
+          ...s,
+          activeTransfer: null,
+          receivedFile: completedItem,
+          transfersHistory: [completedItem, ...s.transfersHistory]
+        }));
+      }
+    };
+  }
+  return worker;
 }
 
 /**
@@ -202,7 +343,7 @@ export async function handleIncomingMetadata(meta) {
   const myPeerId = state.userProfile.peerId;
 
   // 1. SENDER GUARD: Never receive or process your own sent files!
-  if ((meta.senderPeerId && meta.senderPeerId === myPeerId) || (meta.sender === myName && !meta.senderPeerId)) {
+  if (meta.senderPeerId === myPeerId) {
     return;
   }
 
@@ -249,6 +390,18 @@ export async function handleIncomingMetadata(meta) {
     fileIv: meta.fileIv
   };
 
+  const w = getStreamWorker();
+  if (w) {
+    w.postMessage({
+      type: 'init',
+      meta: {
+        ...meta,
+        name: decryptedName,
+        size: parsedSize
+      }
+    });
+  }
+
   roomStore.update(s => ({
     ...s,
     activeTransfer: {
@@ -283,82 +436,11 @@ export async function handleIncomingChunk(arrayBuffer) {
     return;
   }
 
-  receiverState.chunks.push(arrayBuffer);
-  receiverState.receivedBytes += arrayBuffer.byteLength;
-
-  const now = Date.now();
-  if (now - receiverState.lastUIUpdate >= UI_THROTTLE_MS || receiverState.receivedBytes >= receiverState.size) {
-    receiverState.lastUIUpdate = now;
-    const elapsedTime = (now - receiverState.startTime) / 1000 || 0.001;
-    const rawProgress = (receiverState.receivedBytes / receiverState.size) * 100;
-    const progress = Math.min(100, Math.round(rawProgress));
-    const speed = (receiverState.receivedBytes / (1024 * 1024)) / elapsedTime;
-
-    roomStore.update(s => ({
-      ...s,
-      activeTransfer: s.activeTransfer ? {
-        ...s.activeTransfer,
-        progress,
-        speed: speed.toFixed(2)
-      } : null
-    }));
-  }
-
-  // When all bytes are received, combine and decrypt in single-pass
-  if (receiverState.receivedBytes >= receiverState.size && receiverState.size > 0) {
-    let combinedBuffer = new Uint8Array(receiverState.size);
-    let offset = 0;
-    for (const c of receiverState.chunks) {
-      combinedBuffer.set(new Uint8Array(c), offset);
-      offset += c.byteLength;
-    }
-
-    let finalBuffer = combinedBuffer.buffer;
-    if (receiverState.key && receiverState.fileIv) {
-      try {
-        finalBuffer = await decryptBuffer(combinedBuffer.buffer, receiverState.fileIv, receiverState.key);
-      } catch (e) {
-        console.error('[E2EE] Single-pass file decryption error:', e);
-      }
-    }
-
-    const blob = new Blob([finalBuffer], { type: receiverState.mime });
-    const blobUrl = URL.createObjectURL(blob);
-
-    /** @type {import('../stores/roomStore.js').TransferItem} */
-    const completedItem = {
-      name: receiverState.name,
-      size: receiverState.originalSize || receiverState.size,
-      mime: receiverState.mime,
-      sender: receiverState.sender,
-      senderPeerId: receiverState.senderPeerId,
-      progress: 100,
-      type: 'received',
-      blobUrl
-    };
-
-    roomStore.update(s => ({
-      ...s,
-      activeTransfer: null,
-      receivedFile: completedItem,
-      transfersHistory: [completedItem, ...s.transfersHistory]
-    }));
-
-    // Auto-download file if Save: ON setting is enabled
-    if (typeof window !== 'undefined' && localStorage.getItem('firese_auto_download') === 'true') {
-      try {
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = receiverState.name;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      } catch (err) {
-        console.error('[Auto-Save] Automatic file download failed:', err);
-      }
-    }
-
-    receiverState = null;
-    earlyBuffer = [];
+  const w = getStreamWorker();
+  if (w) {
+    w.postMessage({
+      type: 'chunk',
+      chunk: arrayBuffer
+    }, [arrayBuffer]);
   }
 }

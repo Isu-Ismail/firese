@@ -61,7 +61,7 @@
       <div class="flex items-center space-x-2">
         <Users class="w-5 h-5 text-fire-500" />
         <h3 id="peers-modal-title" class="font-bold text-base text-white">
-          Connected Peers ({$roomStore.peerCount})
+          Connected Peers ({1 + $roomStore.peers.length})
         </h3>
       </div>
       <button

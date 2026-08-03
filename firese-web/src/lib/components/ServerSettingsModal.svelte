@@ -33,8 +33,7 @@
     if (serverMode === 'custom' && customWsUrl.trim()) {
       activeUrl = customWsUrl.trim();
     } else {
-      const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-      activeUrl = isHttps ? 'wss://firese-server.onrender.com/ws' : 'ws://localhost:8080/ws';
+      activeUrl = 'wss://firese.onrender.com/ws';
     }
   }
 
