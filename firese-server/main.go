@@ -16,11 +16,25 @@ func main() {
 	hub := room.NewHub()
 	wsHandler := ws.NewHandler(hub, cfg)
 
-	// Health check endpoint for Render monitoring
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	// Health check & UptimeRobot endpoint supporting GET, POST, and OPTIONS
+	healthHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+		w.Write([]byte(`{"status":"ok","server":"firese-server","message":"Server active"}`))
+	}
+
+	http.HandleFunc("/health", healthHandler)
+	http.HandleFunc("/ping", healthHandler)
+	http.HandleFunc("/", healthHandler)
 
 	// WebSocket handler
 	http.HandleFunc("/ws", wsHandler.ServeWS)
