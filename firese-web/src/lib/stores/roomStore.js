@@ -75,6 +75,10 @@ export function generatePeerId() {
  * @property {TransferItem[]} transfersHistory
  * @property {'websocket' | 'webrtc'} transportMode
  * @property {'idle' | 'connecting' | 'connected' | 'failed'} webrtcStatus
+ * @property {string} hostPeerId
+ * @property {boolean} isHost
+ * @property {'webrtc' | 'relay'} roomProtocol
+ * @property {Record<string, string>} peerStatuses
  */
 
 /**
@@ -86,7 +90,7 @@ function getInitialTransportMode() {
     const saved = localStorage.getItem('firese_transport_mode');
     if (saved === 'webrtc') return 'webrtc';
   }
-  return 'websocket';
+  return 'webrtc'; // Default to WebRTC P2P
 }
 
 /** @type {RoomState} */
@@ -107,7 +111,11 @@ const initialState = {
   receivedFile: null,
   transfersHistory: [],
   transportMode: getInitialTransportMode(),
-  webrtcStatus: 'idle'
+  webrtcStatus: 'idle',
+  hostPeerId: '',
+  isHost: false,
+  roomProtocol: 'webrtc',
+  peerStatuses: {}
 };
 
 function createRoomStore() {

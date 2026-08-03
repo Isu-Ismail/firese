@@ -3,13 +3,19 @@
   import { connectWebSocket, disconnectWebSocket } from '../services/websocket.js';
   import { loadChatHistory } from '../services/chatService.js';
   import PeersModal from './PeersModal.svelte';
-  import { Users, Copy, Check, LogOut, Plug, Dices, KeyRound, RotateCcw, History, Clock, Loader2, X, ShieldCheck, Zap, AlertTriangle } from '@lucide/svelte';
-  import { onMount, onDestroy } from 'svelte';
+  import CreateRoomModal from './CreateRoomModal.svelte';
+  import JoinRoomModal from './JoinRoomModal.svelte';
+  import { Users, Copy, Check, LogOut, Plug, Dices, KeyRound, RotateCcw, History, Clock, Loader2, X, ShieldCheck, Zap, AlertTriangle, PlusCircle, LogIn } from '@lucide/svelte';
+  import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+
+  const dispatch = createEventDispatcher();
 
   let roomIdInput = $roomStore.roomId || '';
   let lastConnectedRoomId = '';
   let copied = false;
   let showModal = false;
+  let showCreateModal = false;
+  let showJoinModal = false;
   let showHistoryDropdown = false;
 
   // Connection Lifecycle Timers
@@ -92,7 +98,7 @@
     handleRoomIdChange();
   }
 
-  function handleConnectToggle() {
+  async function handleConnectToggle() {
     if ($roomStore.isConnected) {
       disconnectWebSocket();
       clearConnectingTimers();
@@ -128,7 +134,7 @@
         }
       }, 1000);
 
-      connectWebSocket(roomIdInput.trim().substring(0, 10));
+      await connectWebSocket(roomIdInput.trim().substring(0, 10));
     }
   }
 
@@ -200,109 +206,64 @@
       </div>
     {/if}
 
-    <!-- Room ID Input Bar -->
-    <div class="relative flex items-center flex-1 sm:flex-none sm:w-64 min-w-0 h-8 sm:h-9">
-      <div class="absolute left-2.5 inset-y-0 flex items-center justify-center pointer-events-none text-gray-400">
-        <KeyRound class="w-3.5 h-3.5" />
-      </div>
+    <!-- Room Action Controls -->
+    <div class="flex items-center space-x-2 flex-1 sm:flex-none">
+      {#if !$roomStore.isConnected && !isConnecting}
+        <!-- Create Room Button -->
+        <button
+          type="button"
+          on:click={() => (showCreateModal = true)}
+          class="h-8 sm:h-9 px-3.5 sm:px-4 bg-fire-500/10 hover:bg-fire-500/20 border border-fire-500/30 text-fire-400 font-semibold text-xs sm:text-xs rounded-full shadow-sm flex items-center space-x-1.5 cursor-pointer transition-all hover:scale-105 active:scale-95 flex-shrink-0"
+        >
+          <PlusCircle class="w-3.5 h-3.5 text-fire-400" />
+          <span>Create Room</span>
+        </button>
 
-      <input
-        type="text"
-        maxlength="10"
-        placeholder="Enter room ID"
-        bind:value={roomIdInput}
-        on:input={handleRoomIdChange}
-        on:keydown={handleKeyDown}
-        disabled={$roomStore.isConnected || isConnecting}
-        class="w-full h-full pl-8 pr-20 sm:pr-24 bg-dark-surface rounded-xl text-white font-mono text-xs sm:text-sm focus:outline-none border-none disabled:opacity-80 flex items-center"
-      />
-
-      <!-- Quick Action Buttons inside Room Input -->
-      <div class="absolute right-1 inset-y-0 flex items-center space-x-0.5 sm:space-x-1">
-        <!-- Room History Button -->
-        {#if $roomStore.roomHistory.length > 0 && !$roomStore.isConnected && !isConnecting}
-          <div class="relative flex items-center">
-            <button
-              type="button"
-              on:click={() => (showHistoryDropdown = !showHistoryDropdown)}
-              title="Previously Connected Rooms"
-              aria-label="Previously Connected Rooms"
-              class="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-fire-500 hover:bg-dark-card transition-colors cursor-pointer border-none"
-            >
-              <History class="w-3.5 h-3.5" />
-            </button>
-
-            <!-- Room History Dropdown Menu -->
-            {#if showHistoryDropdown}
-              <div
-                class="absolute right-0 top-8 w-56 sm:w-64 bg-dark-card rounded-xl shadow-2xl p-2 z-30 space-y-1 animate-fadeIn border-none"
-              >
-                <div class="text-[10px] font-semibold text-gray-400 uppercase px-2 py-1 flex items-center justify-between border-b border-gray-700/40">
-                  <span>Room History</span>
-                  <Clock class="w-3 h-3 text-fire-500" />
-                </div>
-                <div class="max-h-48 overflow-y-auto space-y-1">
-                  {#each $roomStore.roomHistory as item}
-                    <button
-                      type="button"
-                      on:click={() => selectHistoryRoom(item.roomId)}
-                      class="w-full text-left p-2 hover:bg-dark-surface rounded-lg transition-colors flex items-center justify-between text-xs cursor-pointer border-none"
-                    >
-                      <span class="font-mono font-bold text-white">{item.roomId}</span>
-                      <span class="text-[10px] text-gray-400">{item.lastConnected}</span>
-                    </button>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Revert to Last Connected Room ID Button -->
-        {#if lastConnectedRoomId && roomIdInput !== lastConnectedRoomId && !$roomStore.isConnected && !isConnecting}
+        <!-- Join Room Button -->
+        <button
+          type="button"
+          on:click={() => (showJoinModal = true)}
+          class="h-8 sm:h-9 px-3.5 sm:px-4 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 font-semibold text-xs sm:text-xs rounded-full shadow-sm flex items-center space-x-1.5 cursor-pointer transition-all hover:scale-105 active:scale-95 flex-shrink-0"
+        >
+          <LogIn class="w-3.5 h-3.5 text-emerald-400" />
+          <span>Join Room</span>
+        </button>
+      {:else}
+        <!-- Active Connected Room ID Badge -->
+        <div class="h-8 sm:h-9 px-3 bg-dark-surface rounded-xl flex items-center space-x-2 border-none">
+          <KeyRound class="w-3.5 h-3.5 text-fire-500 flex-shrink-0" />
+          <span class="font-mono font-bold text-xs sm:text-sm text-white tracking-wider">{$roomStore.roomId}</span>
           <button
             type="button"
-            on:click={revertToLastConnectedId}
-            title="Revert to last connected ID ({lastConnectedRoomId})"
-            aria-label="Revert to last connected ID"
-            class="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-amber-400 hover:text-amber-300 hover:bg-dark-card transition-colors animate-pulse cursor-pointer border-none"
+            on:click={copyRoomCode}
+            title="Copy Room Code"
+            class="p-1 text-gray-400 hover:text-white rounded transition-colors cursor-pointer border-none flex items-center justify-center"
           >
-            <RotateCcw class="w-3.5 h-3.5" />
+            {#if copied}
+              <Check class="w-3.5 h-3.5 text-emerald-400" />
+            {:else}
+              <Copy class="w-3.5 h-3.5 text-gray-400" />
+            {/if}
           </button>
-        {/if}
-
-        <!-- Dice Icon for 10-char Alphanumeric Generator -->
-        <button
-          type="button"
-          on:click={generateRandomRoomId}
-          disabled={$roomStore.isConnected || isConnecting}
-          title="Generate random Room ID"
-          aria-label="Generate random Room ID"
-          class="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-fire-500 hover:bg-dark-card transition-colors disabled:opacity-40 cursor-pointer border-none"
-        >
-          <Dices class="w-3.5 h-3.5" />
-        </button>
-
-        <!-- Copy Room ID -->
-        <button
-          type="button"
-          on:click={copyRoomCode}
-          title="Copy Room ID"
-          aria-label="Copy Room ID"
-          class="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-dark-card transition-colors cursor-pointer border-none"
-        >
-          {#if copied}
-            <Check class="w-3.5 h-3.5 text-emerald-500" />
-          {:else}
-            <Copy class="w-3.5 h-3.5" />
-          {/if}
-        </button>
-      </div>
+        </div>
+      {/if}
     </div>
   </div>
 
-  <!-- Right Side: Peers Counter + Connect / Disconnect / Cancel Button -->
+  <!-- Right Side: E2EE Security Badge + Peers Counter + Disconnect Button -->
   <div class="flex items-center space-x-1.5 flex-shrink-0">
+    <!-- Clickable AES-256 E2EE Security Inspector Badge -->
+    <button
+      type="button"
+      on:click={() => dispatch('openSecurity')}
+      title="Inspect Zero-Knowledge AES-256 End-to-End Encryption"
+      aria-label="Inspect Security Payload"
+      class="h-8 sm:h-9 px-2 sm:px-3 rounded-full text-[11px] sm:text-xs bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 font-mono font-semibold transition-all flex items-center space-x-1 cursor-pointer shadow-sm hover:scale-105 active:scale-95 flex-shrink-0"
+    >
+      <ShieldCheck class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+      <span class="hidden xs:inline sm:inline">AES-256 E2EE</span>
+    </button>
+
     {#if $roomStore.isConnected}
       <button
         type="button"
@@ -314,38 +275,23 @@
         <span class="font-mono font-bold">{1 + $roomStore.peers.length}</span>
         <span class="hidden sm:inline">{(1 + $roomStore.peers.length) === 1 ? 'Peer' : 'Peers'}</span>
       </button>
-    {/if}
 
-    <!-- Connect / Disconnect / Cancel Button (Dead Center Circle on Mobile, Pill Badge on Desktop) -->
-    <button
-      type="button"
-      on:click={handleConnectToggle}
-      disabled={(!roomIdInput.trim() && !$roomStore.isConnected && !isConnecting) || (isConnecting && connectingSeconds < 5)}
-      class="w-8 h-8 sm:w-auto sm:px-4 sm:h-9 rounded-full text-xs sm:text-sm font-semibold flex items-center justify-center sm:space-x-1.5 shadow-md transition-all duration-100 ease-out hover:scale-[1.03] cursor-pointer border-none disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex-shrink-0
-        {$roomStore.isConnected
-          ? 'bg-dark-surface hover:bg-red-500/20 text-red-400'
-          : (isConnecting
-              ? (connectingSeconds >= 5 ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 cursor-pointer' : 'bg-amber-500/10 text-amber-400')
-              : 'bg-fire-500 hover:bg-fire-600 text-white-force')}"
-    >
-      {#if $roomStore.isConnected}
+      <!-- Disconnect Button -->
+      <button
+        type="button"
+        on:click={handleConnectToggle}
+        class="h-8 sm:h-9 px-3 bg-dark-surface hover:bg-red-500/20 text-red-400 font-semibold text-xs rounded-full flex items-center space-x-1.5 cursor-pointer border-none transition-colors"
+      >
         <LogOut class="w-4 h-4 text-red-400 flex-shrink-0" />
-        <span class="hidden sm:inline">Disconnect</span>
-      {:else if isConnecting}
-        {#if connectingSeconds >= 5}
-          <!-- Cancel Button after 5 seconds -->
-          <X class="w-4 h-4 text-amber-400 flex-shrink-0" />
-          <span class="hidden sm:inline">Cancel</span>
-        {:else}
-          <!-- Spinner during first 5 seconds -->
-          <Loader2 class="w-4 h-4 text-amber-400 animate-spin flex-shrink-0" />
-          <span class="hidden sm:inline">Connecting...</span>
-        {/if}
-      {:else}
-        <Plug class="w-4 h-4 text-white-force flex-shrink-0" />
-        <span class="hidden sm:inline">Connect</span>
-      {/if}
-    </button>
+        <span class="hidden sm:inline">Leave Room</span>
+      </button>
+    {:else if isConnecting}
+      <!-- Connecting Spinner -->
+      <div class="h-8 sm:h-9 px-3 bg-amber-500/10 text-amber-400 font-semibold text-xs rounded-full flex items-center space-x-1.5">
+        <Loader2 class="w-4 h-4 text-amber-400 animate-spin" />
+        <span>Connecting...</span>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -359,7 +305,10 @@
   </div>
 {/if}
 
-<!-- Peers List Popup Modal -->
+<!-- Modals -->
 {#if showModal}
   <PeersModal on:close={() => (showModal = false)} />
 {/if}
+
+<CreateRoomModal bind:isOpen={showCreateModal} />
+<JoinRoomModal bind:isOpen={showJoinModal} />

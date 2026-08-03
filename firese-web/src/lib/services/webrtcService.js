@@ -89,9 +89,23 @@ function updateWebRTCStatus() {
   const state = get(roomStore);
   if (state.transportMode !== 'webrtc') return;
 
+  const newPeerStatuses = { ...state.peerStatuses };
+  peerConnections.forEach((pc, peerId) => {
+    const isConnected = pc.connectionState === 'connected' || pc.iceConnectionState === 'connected';
+    const isFailed = pc.connectionState === 'failed' || pc.iceConnectionState === 'failed';
+
+    if (isConnected) {
+      newPeerStatuses[peerId] = 'p2p_connected';
+    } else if (isFailed) {
+      newPeerStatuses[peerId] = 'p2p_failed';
+    } else {
+      newPeerStatuses[peerId] = 'p2p_connecting';
+    }
+  });
+
   const pcs = Array.from(peerConnections.values());
   if (pcs.length === 0) {
-    roomStore.update(s => ({ ...s, webrtcStatus: 'idle' }));
+    roomStore.update(s => ({ ...s, webrtcStatus: 'idle', peerStatuses: newPeerStatuses }));
     return;
   }
 
@@ -99,11 +113,11 @@ function updateWebRTCStatus() {
   const hasFailed = pcs.some(pc => pc.connectionState === 'failed' || pc.iceConnectionState === 'failed');
 
   if (hasConnected) {
-    roomStore.update(s => ({ ...s, webrtcStatus: 'connected' }));
+    roomStore.update(s => ({ ...s, webrtcStatus: 'connected', peerStatuses: newPeerStatuses }));
   } else if (hasFailed) {
-    roomStore.update(s => ({ ...s, webrtcStatus: 'failed' }));
+    roomStore.update(s => ({ ...s, webrtcStatus: 'failed', peerStatuses: newPeerStatuses }));
   } else {
-    roomStore.update(s => ({ ...s, webrtcStatus: 'connecting' }));
+    roomStore.update(s => ({ ...s, webrtcStatus: 'connecting', peerStatuses: newPeerStatuses }));
   }
 }
 

@@ -5,24 +5,34 @@
   import ChatPanel from './lib/components/ChatPanel.svelte';
   import ThemeSwitcher from './lib/components/ThemeSwitcher.svelte';
   import ServerSettingsModal from './lib/components/ServerSettingsModal.svelte';
+  import TutorialModal from './lib/components/TutorialModal.svelte';
+  import SecurityInspectorModal from './lib/components/SecurityInspectorModal.svelte';
   import FireseLogo from './lib/components/FireseLogo.svelte';
   import { roomStore } from './lib/stores/roomStore.js';
   import { endSessionAndClearCache } from './lib/services/websocket.js';
-  import { Flame, ShieldCheck, HardDrive, User, Globe, LogOut, X, Server } from '@lucide/svelte';
+  import { Flame, ShieldCheck, HardDrive, User, Globe, LogOut, X, Server, HelpCircle } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { fetchPublicIp } from './lib/services/ipService.js';
  
   let showMobileProfileModal = false;
   let showServerSettingsModal = false;
+  let showTutorialModal = false;
+  let showSecurityModal = false;
 
   onMount(() => {
     if (typeof window !== 'undefined') {
       const savedNickname = localStorage.getItem('firese_nickname');
+      const tourComplete = localStorage.getItem('firese_tutorial_complete') === 'true';
+
       if (savedNickname) {
         roomStore.update(s => ({
           ...s,
           userProfile: { ...s.userProfile, nickname: savedNickname }
         }));
+      }
+
+      if (!tourComplete && savedNickname) {
+        showTutorialModal = true;
       }
     }
     fetchPublicIp();
@@ -57,14 +67,18 @@
 
     <!-- Header Action Controls -->
     <div class="flex items-center space-x-1.5 sm:space-x-2 text-xs flex-shrink-0">
-      <!-- Header E2EE Security Badge -->
-      <div
-        title="Zero-Knowledge AES-256 End-to-End Encrypted"
-        class="hidden md:flex items-center space-x-1 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-full text-xs font-mono font-semibold"
+
+      <!-- Help / Tour Button -->
+      <button
+        type="button"
+        on:click={() => (showTutorialModal = true)}
+        title="App Tour & Help"
+        aria-label="App Tour & Help"
+        class="p-1.5 sm:px-3 sm:py-1.5 bg-dark-surface rounded-xl text-gray-300 hover:text-amber-400 hover:bg-amber-500/10 transition-colors cursor-pointer border-none flex items-center space-x-1.5"
       >
-        <ShieldCheck class="w-3.5 h-3.5 text-emerald-400" />
-        <span>AES-256 E2EE</span>
-      </div>
+        <HelpCircle class="w-4 h-4 text-amber-400" />
+        <span class="hidden sm:inline font-medium text-xs">Help</span>
+      </button>
 
       <!-- Relay Server Settings Button -->
       <button
@@ -125,11 +139,11 @@
     {#if !$roomStore.userProfile.nickname}
       <!-- Screen Centering for Nickname Entry Card -->
       <div class="flex-1 flex items-center justify-center w-full my-auto min-h-0">
-        <RoomJoin />
+        <RoomJoin on:startTour={() => (showTutorialModal = true)} />
       </div>
     {:else}
       <!-- Room Control Bar -->
-      <PeerStatus />
+      <PeerStatus on:openSecurity={() => (showSecurityModal = true)} />
 
       <!-- Side-by-Side Dual Panel Grid -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch flex-1 min-h-0">
@@ -198,6 +212,12 @@
 
   <!-- Self-Hosted Relay Server Settings Modal -->
   <ServerSettingsModal bind:isOpen={showServerSettingsModal} />
+
+  <!-- Interactive Guided Tour Modal -->
+  <TutorialModal bind:isOpen={showTutorialModal} />
+
+  <!-- Zero-Knowledge E2EE Security Inspector Modal -->
+  <SecurityInspectorModal bind:isOpen={showSecurityModal} />
 
   <!-- Footer (Single Line Row with Tight Margins on Mobile & Desktop) -->
   <footer class="w-full max-w-6xl mx-auto mt-2.5 pt-2 border-t border-gray-700/40 text-[11px] sm:text-xs text-gray-500 flex flex-row items-center justify-between gap-2 flex-shrink-0">

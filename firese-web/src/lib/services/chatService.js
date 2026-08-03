@@ -1,6 +1,6 @@
 import { sendWebSocketMessage } from './websocket.js';
 import { roomStore } from '../stores/roomStore.js';
-import { deriveRoomKey, encryptText, decryptText } from './cryptoService.js';
+import { deriveRoomKey, encryptText, decryptText, deriveServerRoomId } from './cryptoService.js';
 import { get } from 'svelte/store';
 
 /**
@@ -18,9 +18,11 @@ export async function sendTextMessage(text, targetRecipient = 'group') {
 
   let ciphertext = text.trim();
   let iv = '';
+  let serverRoomHash = '';
 
   if (roomId) {
     try {
+      serverRoomHash = await deriveServerRoomId(roomId);
       const roomKey = await deriveRoomKey(roomId);
       const encrypted = await encryptText(ciphertext, roomKey);
       ciphertext = encrypted.ciphertext;
@@ -33,7 +35,7 @@ export async function sendTextMessage(text, targetRecipient = 'group') {
   const messagePayload = {
     type: 'chat_message',
     id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-    roomId,
+    roomId: serverRoomHash,
     sender: senderName,
     senderPeerId: myPeerId,
     target: targetRecipient || 'group',

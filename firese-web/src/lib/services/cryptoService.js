@@ -53,6 +53,23 @@ function base64ToBuffer(base64) {
 }
 
 /**
+ * One-way hash user's room code to derive a non-reversible Server Routing Room ID.
+ * The server ONLY receives this hash for packet routing.
+ * Because SHA-256 is non-reversible, the server CANNOT know the original room code or derive the AES-256 key!
+ * @param {string} rawRoomCode
+ * @returns {Promise<string>} 10-char Hex Server Room Hash
+ */
+export async function deriveServerRoomId(rawRoomCode) {
+  if (!rawRoomCode) return '';
+  const clean = rawRoomCode.trim();
+  const rawMaterial = encodeText(clean + '_firese_server_routing_salt_v2');
+  const hashBuffer = await window.crypto.subtle.digest('SHA-256', /** @type {any} */ (rawMaterial.buffer));
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hexHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  return hexHash.substring(0, 10);
+}
+
+/**
  * Derive 256-bit AES-GCM CryptoKey from Room ID
  * @param {string} roomId
  * @returns {Promise<CryptoKey>}

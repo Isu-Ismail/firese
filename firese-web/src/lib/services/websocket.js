@@ -3,7 +3,7 @@ import { handleIncomingChunk, handleIncomingMetadata, handleTransferAck, handleT
 import { initiateWebRTCConnection, handleWebRTCOffer, handleWebRTCAnswer, handleWebRTCIce, closeAllWebRTC, removePeerWebRTC } from './webrtcService.js';
 import { fetchPublicIp } from './ipService.js';
 import { loadChatHistory, addChatMessage } from './chatService.js';
-import { deriveRoomKey, decryptText } from './cryptoService.js';
+import { deriveRoomKey, decryptText, deriveServerRoomId } from './cryptoService.js';
 import { get } from 'svelte/store';
 
 /** @type {WebSocket | null} */
@@ -109,9 +109,9 @@ export function broadcastSelfPeerInfo() {
 /**
  * Connect to WebSocket room
  * @param {string} roomId
- * @returns {WebSocket | null}
+ * @returns {Promise<WebSocket | null>}
  */
-export function connectWebSocket(roomId) {
+export async function connectWebSocket(roomId) {
   if (!roomId || !roomId.trim()) return null;
 
   isExplicitDisconnect = false;
@@ -121,6 +121,9 @@ export function connectWebSocket(roomId) {
     socket.close();
   }
 
+  // Derive non-reversible server routing hash
+  const serverRoomId = await deriveServerRoomId(cleanRoomId);
+
   // Persist last room ID in localStorage permanently
   if (typeof window !== 'undefined') {
     localStorage.setItem('firese_last_room', cleanRoomId);
@@ -128,7 +131,7 @@ export function connectWebSocket(roomId) {
 
   recordRoomHistory(cleanRoomId);
 
-  const wsUrl = getWebSocketUrl(cleanRoomId);
+  const wsUrl = getWebSocketUrl(serverRoomId);
   socket = new WebSocket(wsUrl);
   socket.binaryType = 'arraybuffer';
 
@@ -154,7 +157,25 @@ export function connectWebSocket(roomId) {
         const data = JSON.parse(event.data);
         const state = get(roomStore);
 
-        if (data.type === 'peer_count') {
+        if (data.type === 'room_info') {
+          const hostId = data.hostPeerId || '';
+          const protocol = data.protocol || 'webrtc';
+          const isHost = hostId !== '' && hostId === state.userProfile.peerId;
+
+          roomStore.update(s => ({
+            ...s,
+            hostPeerId: hostId,
+            isHost: isHost,
+            roomProtocol: protocol,
+            transportMode: protocol === 'relay' ? 'websocket' : 'webrtc'
+          }));
+        } else if (data.type === 'peer_kicked') {
+          if (data.targetPeerId === state.userProfile.peerId) {
+            alert('You have been removed from the room by the Room Host.');
+            endSessionAndClearCache();
+            return;
+          }
+        } else if (data.type === 'peer_count') {
           const count = typeof data.count === 'number' ? data.count : 1;
           roomStore.update(s => ({
             ...s,
@@ -350,30 +371,40 @@ export function endSessionAndClearCache() {
     localStorage.clear();
     sessionStorage.clear();
   }
-  roomStore.set({
-    roomId: '',
-    isConnected: false,
-    isConnecting: false,
-    peerCount: 0,
-    userProfile: {
-      peerId: generatePeerId(),
-      nickname: '',
-      ip: 'Detecting...'
-    },
-    peers: [],
-    chatMessages: [],
-    roomHistory: [],
-    activeTransfer: null,
-    receivedFile: null,
-    transfersHistory: [],
-    transportMode: 'websocket',
-    webrtcStatus: 'idle'
-  });
+  roomStore.reset();
 }
 
 // Silent disconnect on page unload or browser close without wiping stored room code
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
     disconnectWebSocket();
+  });
+}
+
+/**
+ * Update room protocol mode (Host only)
+ * @param {'webrtc' | 'relay'} protocol
+ */
+export function setRoomProtocol(protocol) {
+  sendWebSocketMessage({
+    type: 'set_room_protocol',
+    protocol
+  });
+  roomStore.update(s => ({
+    ...s,
+    roomProtocol: protocol,
+    transportMode: protocol === 'relay' ? 'websocket' : 'webrtc'
+  }));
+}
+
+/**
+ * Kick peer from room (Host only)
+ * @param {string} targetPeerId
+ */
+export function kickPeer(targetPeerId) {
+  if (!targetPeerId) return;
+  sendWebSocketMessage({
+    type: 'kick_peer',
+    targetPeerId
   });
 }

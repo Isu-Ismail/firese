@@ -1,10 +1,11 @@
 <script>
   import { roomStore } from "../stores/roomStore.js";
-  import { Flame, ArrowRight, User } from "@lucide/svelte";
+  import { Flame, ArrowRight, User, Check } from "@lucide/svelte";
   import { createEventDispatcher } from "svelte";
 
   const dispatch = createEventDispatcher();
   let nickname = $roomStore.userProfile.nickname || "";
+  let wantTour = typeof window !== 'undefined' ? localStorage.getItem('firese_tutorial_complete') !== 'true' : true;
 
   function handleSaveNickname() {
     const trimmed = nickname.trim();
@@ -12,8 +13,12 @@
       localStorage.setItem("firese_nickname", trimmed);
       roomStore.update((s) => ({
         ...s,
-        userProfile: { ...s.userProfile, nickname: trimmed },
+        userProfile: { ...s.userProfile, nickname: trimmed }
       }));
+
+      if (wantTour) {
+        dispatch("startTour");
+      }
       dispatch("save");
     }
   }
@@ -74,7 +79,23 @@
       </div>
     </div>
 
-    <!-- Save & Continue Button with Zoom & Arrow Slide Micro-Animations -->
+    <!-- Custom Lucide Icon Styled Tour Toggle Button -->
+    <button
+      type="button"
+      on:click={() => (wantTour = !wantTour)}
+      class="w-full p-2.5 bg-dark-surface hover:bg-dark-surface-hover rounded-xl flex items-center space-x-2.5 text-left border-none cursor-pointer transition-colors"
+    >
+      <div class="w-5 h-5 rounded-md flex items-center justify-center transition-colors
+        {wantTour ? 'bg-fire-500 text-white' : 'bg-gray-700/60 text-transparent'}"
+      >
+        <Check class="w-3.5 h-3.5" />
+      </div>
+      <span class="text-xs font-medium text-gray-300">
+        Take a quick interactive app tour <span class="text-fire-400 font-semibold">(Recommended)</span>
+      </span>
+    </button>
+
+    <!-- Save & Continue Button -->
     <button
       type="submit"
       disabled={!nickname.trim()}
