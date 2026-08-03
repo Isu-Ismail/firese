@@ -125,6 +125,8 @@ export async function sendFile(file, targetRecipient = 'group') {
   let offset = 0;
   let lastUIUpdate = 0;
   const startTime = Date.now();
+  activeSenderAckBytes = 0;
+  const WINDOW_SIZE_BYTES = 4 * 1024 * 1024; // 4MB Sliding Window ACK Pacing
 
   roomStore.update(s => ({
     ...s,
@@ -140,8 +142,15 @@ export async function sendFile(file, targetRecipient = 'group') {
     }
   }));
 
-  // 2. Stream binary 512KB chunks with UI reactivity throttling & smooth network pacing
+  // 2. Stream binary 512KB chunks with Sliding Window ACK flow control & progress sync
   while (offset < totalBytes) {
+    // Sliding Window ACK Backpressure: If sender is > 4MB ahead of Receiver ACK, pause to lockstep progress
+    let ackTimeoutCounter = 0;
+    while (!useWebRTC && (offset - activeSenderAckBytes > WINDOW_SIZE_BYTES) && ackTimeoutCounter < 200) {
+      await new Promise(r => setTimeout(r, 20));
+      ackTimeoutCounter++;
+    }
+
     const end = Math.min(offset + CHUNK_SIZE, totalBytes);
     const chunk = streamingBuffer.slice(offset, end);
 
@@ -156,15 +165,16 @@ export async function sendFile(file, targetRecipient = 'group') {
     if (now - lastUIUpdate >= UI_THROTTLE_MS || offset === totalBytes) {
       lastUIUpdate = now;
       const elapsedTime = (now - startTime) / 1000 || 0.001;
-      const rawProgress = Math.min(99, Math.round((offset / totalBytes) * 99));
-      const speed = (offset / (1024 * 1024)) / elapsedTime;
+      const currentBytes = useWebRTC ? offset : Math.min(offset, Math.max(offset - WINDOW_SIZE_BYTES, activeSenderAckBytes));
+      const rawProgress = Math.min(99, Math.round((currentBytes / totalBytes) * 99));
+      const speed = (currentBytes / (1024 * 1024)) / elapsedTime;
 
       roomStore.update(s => ({
         ...s,
         activeTransfer: s.activeTransfer ? {
           ...s.activeTransfer,
           progress: Math.max(s.activeTransfer.progress || 0, rawProgress),
-          speed: speed.toFixed(2)
+          speed: speed > 0 ? speed.toFixed(2) : s.activeTransfer.speed
         } : null
       }));
     }
@@ -212,6 +222,7 @@ export async function sendFile(file, targetRecipient = 'group') {
 
 /** @type {(() => void) | null} */
 let activeSenderAckCallback = null;
+let activeSenderAckBytes = 0;
 
 /**
  * Handle incoming transfer_ack progress frame from receiver peer
@@ -219,6 +230,10 @@ let activeSenderAckCallback = null;
  */
 export function handleTransferAck(ack) {
   if (!ack) return;
+
+  if (ack.receivedBytes !== undefined) {
+    activeSenderAckBytes = Math.max(activeSenderAckBytes, ack.receivedBytes);
+  }
 
   if (ack.progress !== undefined) {
     roomStore.update(s => ({
@@ -246,15 +261,16 @@ function getStreamWorker() {
     worker = new Worker(new URL('../workers/streamWorker.js', import.meta.url), { type: 'module' });
     worker.onmessage = async (e) => {
       const data = e.data;
-      if (!data || !receiverState) return;
+      if (!data) return;
 
       if (data.type === 'progress') {
-        if (receiverState.senderPeerId) {
+        if (receiverState && receiverState.senderPeerId) {
           sendWebSocketMessage({
             type: 'transfer_ack',
             targetPeerId: receiverState.senderPeerId,
             progress: data.progress,
-            speed: data.speed
+            speed: data.speed,
+            receivedBytes: data.receivedBytes
           });
         }
 
