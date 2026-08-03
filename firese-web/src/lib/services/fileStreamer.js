@@ -502,7 +502,7 @@ export async function handleIncomingMetadata(meta) {
     key: roomKey,
     fileIv: meta.fileIv
   };
-
+ 
   // Reset cancellation state on new incoming transfer
   isTransferCancelled = false;
 
