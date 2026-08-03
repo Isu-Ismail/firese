@@ -7,7 +7,8 @@
   export let isOpen = false;
 
   let serverMode = 'default'; // 'default' | 'custom'
-  let transportMode = 'websocket'; // 'websocket' | 'webrtc'
+  /** @type {'websocket' | 'webrtc'} */
+  let transportMode = 'websocket';
   let customWsUrl = '';
   let activeUrl = '';
 

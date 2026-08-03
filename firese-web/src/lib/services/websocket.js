@@ -299,7 +299,9 @@ export function endSessionAndClearCache() {
     roomHistory: [],
     activeTransfer: null,
     receivedFile: null,
-    transfersHistory: []
+    transfersHistory: [],
+    transportMode: 'websocket',
+    webrtcStatus: 'idle'
   });
 }
 
