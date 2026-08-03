@@ -169,9 +169,9 @@ export async function sendFile(file, targetRecipient = 'group') {
       }));
     }
 
-    // Smooth network pacing every 2 chunks (1MB) to ensure socket & Go server channels never drop packets
-    if (offset % (CHUNK_SIZE * 2) === 0) {
-      await new Promise(r => setTimeout(r, 10));
+    // High-performance micro-task yielding every 4 chunks (2MB) for maximum TCP throughput
+    if (offset % (CHUNK_SIZE * 4) === 0) {
+      await new Promise(r => setTimeout(r, 0));
     }
   }
 
@@ -225,7 +225,8 @@ export function handleTransferAck(ack) {
       ...s,
       activeTransfer: (s.activeTransfer && s.activeTransfer.isSending) ? {
         ...s.activeTransfer,
-        progress: Math.max(s.activeTransfer.progress || 0, ack.progress)
+        progress: Math.max(s.activeTransfer.progress || 0, ack.progress),
+        speed: ack.speed || s.activeTransfer.speed
       } : s.activeTransfer
     }));
   }
@@ -252,7 +253,8 @@ function getStreamWorker() {
           sendWebSocketMessage({
             type: 'transfer_ack',
             targetPeerId: receiverState.senderPeerId,
-            progress: data.progress
+            progress: data.progress,
+            speed: data.speed
           });
         }
 
