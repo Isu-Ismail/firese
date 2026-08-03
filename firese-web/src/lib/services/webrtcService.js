@@ -321,10 +321,12 @@ export async function handleWebRTCAnswer(payload) {
   const senderPeerId = payload.senderPeerId;
   const pc = peerConnections.get(senderPeerId);
   if (pc && payload.answer) {
-    try {
-      await pc.setRemoteDescription(new RTCSessionDescription(payload.answer));
-    } catch (err) {
-      console.error(`[WebRTC] Failed to set remote answer from ${senderPeerId}:`, err);
+    if (pc.signalingState === 'have-local-offer') {
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(payload.answer));
+      } catch (err) {
+        console.error(`[WebRTC] Failed to set remote answer from ${senderPeerId}:`, err);
+      }
     }
   }
 }
@@ -338,10 +340,10 @@ export async function handleWebRTCIce(payload) {
   const pc = peerConnections.get(senderPeerId);
   if (pc && payload.candidate) {
     try {
-      await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
-    } catch (err) {
-      console.error(`[WebRTC] Failed to add ICE candidate from ${senderPeerId}:`, err);
-    }
+      if (pc.remoteDescription && pc.remoteDescription.type) {
+        await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+      }
+    } catch {}
   }
 }
 

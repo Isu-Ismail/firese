@@ -196,9 +196,11 @@ export function connectWebSocket(roomId) {
               return { ...s, peers: updatedPeers };
             });
 
-            // If WebRTC mode is active and it's a new peer, initiate WebRTC P2P DataChannel connection
+            // Deterministic WebRTC Offerer selection (only lexicographically smaller peerId initiates offer to prevent glare)
             if (isNewPeer && state.transportMode === 'webrtc') {
-              initiateWebRTCConnection(peerId);
+              if (state.userProfile.peerId < peerId) {
+                initiateWebRTCConnection(peerId);
+              }
             }
           }
         } else if (data.type === 'transfer_ack') {
