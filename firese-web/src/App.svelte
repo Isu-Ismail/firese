@@ -11,7 +11,7 @@
   import { Flame, ShieldCheck, HardDrive, User, Globe, LogOut, X, Server } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { fetchPublicIp } from './lib/services/ipService.js';
-
+ 
   let showMobileProfileModal = false;
   let showServerSettingsModal = false;
 
