@@ -1,6 +1,7 @@
 package room
 
 import (
+	"encoding/json"
 	"log"
 	"time"
 
@@ -55,6 +56,26 @@ func (c *Client) ReadPump(hub *Hub) {
 				log.Printf("[Client %s] Read error: %v", c.ID, err)
 			}
 			break
+		}
+
+		// Parse JSON control signals
+		if messageType == websocket.TextMessage {
+			var packet struct {
+				Type         string `json:"type"`
+				Protocol     string `json:"protocol"`
+				TargetPeerID string `json:"targetPeerId"`
+			}
+			if err := json.Unmarshal(payload, &packet); err == nil {
+				if packet.Type == "set_room_protocol" && packet.Protocol != "" {
+					if c.Room.SetProtocol(c.ID, packet.Protocol) {
+						c.Room.broadcastRoomInfo()
+					}
+					continue
+				} else if packet.Type == "kick_peer" && packet.TargetPeerID != "" {
+					c.Room.KickPeer(c.ID, packet.TargetPeerID)
+					continue
+				}
+			}
 		}
 
 		// Relay frame to room broadcast channel
