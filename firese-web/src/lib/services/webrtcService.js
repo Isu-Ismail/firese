@@ -168,7 +168,7 @@ function setupDataChannel(peerId, dc) {
       try {
         const payload = JSON.parse(event.data);
         if (payload.type === 'file_meta') {
-          await handleIncomingMetadata(payload);
+           await handleIncomingMetadata(payload);
         } else if (payload.type === 'transfer_ack') {
           handleTransferAck(payload);
         } else if (payload.type === 'chat_message') {
