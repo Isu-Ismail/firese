@@ -204,11 +204,11 @@ export function connectWebSocket(roomId) {
         } else if (data.type === 'transfer_ack') {
           handleTransferAck(data);
         } else if (data.type === 'webrtc_offer') {
-          await handleWebRTCOffer(data);
+          if (!data.targetPeerId || data.targetPeerId === state.userProfile.peerId) await handleWebRTCOffer(data);
         } else if (data.type === 'webrtc_answer') {
-          await handleWebRTCAnswer(data);
+          if (!data.targetPeerId || data.targetPeerId === state.userProfile.peerId) await handleWebRTCAnswer(data);
         } else if (data.type === 'webrtc_ice') {
-          await handleWebRTCIce(data);
+          if (!data.targetPeerId || data.targetPeerId === state.userProfile.peerId) await handleWebRTCIce(data);
         } else if (data.type === 'chat_message') {
           const isTargetMe = data.targetPeerId ? data.targetPeerId === state.userProfile.peerId : (data.target === state.userProfile.nickname);
           const isSenderMe = data.senderPeerId ? data.senderPeerId === state.userProfile.peerId : (data.sender === state.userProfile.nickname);

@@ -4,7 +4,7 @@
 
 import { sendWebSocketMessage } from './websocket.js';
 import { roomStore } from '../stores/roomStore.js';
-import { handleIncomingMetadata, handleIncomingChunk } from './fileStreamer.js';
+import { handleIncomingMetadata, handleIncomingChunk, handleTransferAck } from './fileStreamer.js';
 import { get } from 'svelte/store';
 
 const STUN_SERVERS = [
@@ -20,6 +20,52 @@ const dataChannels = new Map();
 
 /** @type {Map<string, any>} */
 const connectionTimers = new Map();
+
+/**
+ * Test STUN server connectivity directly over raw UDP without HTTP
+ * @returns {Promise<{ success: boolean, candidate?: string, error?: string }>}
+ */
+export function testStunServer() {
+  return new Promise((resolve) => {
+    try {
+      const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+      let resolved = false;
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          pc.close();
+          resolve({ success: false, error: 'STUN UDP Timeout (Port 19302 blocked)' });
+        }
+      }, 3000);
+
+      pc.createDataChannel('stunTest');
+      pc.onicecandidate = (e) => {
+        if (e.candidate && e.candidate.candidate.includes('srflx')) {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            const candidateStr = e.candidate.candidate;
+            pc.close();
+            resolve({ success: true, candidate: candidateStr });
+          }
+        }
+      };
+
+      pc.createOffer()
+        .then(offer => pc.setLocalDescription(offer))
+        .catch(err => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            pc.close();
+            resolve({ success: false, error: err.message });
+          }
+        });
+    } catch (e) {
+      resolve({ success: false, error: e.message });
+    }
+  });
+}
 
 /**
  * Update global roomStore WebRTC connection status based on active mesh
@@ -123,6 +169,8 @@ function setupDataChannel(peerId, dc) {
         const payload = JSON.parse(event.data);
         if (payload.type === 'file_meta') {
           await handleIncomingMetadata(payload);
+        } else if (payload.type === 'transfer_ack') {
+          handleTransferAck(payload);
         } else if (payload.type === 'chat_message') {
           // Direct P2P chat message
           roomStore.update(s => ({
@@ -162,9 +210,11 @@ export async function initiateWebRTCConnection(targetPeerId) {
 
   pc.onicecandidate = (event) => {
     if (event.candidate) {
+      const state = get(roomStore);
       sendWebSocketMessage({
         type: 'webrtc_ice',
         targetPeerId,
+        senderPeerId: state.userProfile.peerId,
         candidate: event.candidate
       });
     }
@@ -186,9 +236,11 @@ export async function initiateWebRTCConnection(targetPeerId) {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
+    const state = get(roomStore);
     sendWebSocketMessage({
       type: 'webrtc_offer',
       targetPeerId,
+      senderPeerId: state.userProfile.peerId,
       offer
     });
   } catch (err) {
@@ -225,9 +277,11 @@ export async function handleWebRTCOffer(payload) {
 
   pc.onicecandidate = (event) => {
     if (event.candidate) {
+      const state = get(roomStore);
       sendWebSocketMessage({
         type: 'webrtc_ice',
         targetPeerId: senderPeerId,
+        senderPeerId: state.userProfile.peerId,
         candidate: event.candidate
       });
     }
@@ -245,9 +299,11 @@ export async function handleWebRTCOffer(payload) {
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
+    const state = get(roomStore);
     sendWebSocketMessage({
       type: 'webrtc_answer',
       targetPeerId: senderPeerId,
+      senderPeerId: state.userProfile.peerId,
       answer
     });
   } catch (err) {

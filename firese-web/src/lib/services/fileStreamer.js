@@ -142,11 +142,11 @@ export async function sendFile(file, targetRecipient = 'group') {
     }
   }));
 
-  // 2. Stream binary 512KB chunks with Sliding Window ACK flow control & 1:1 progress sync
+  // 2. Stream binary 512KB chunks with Strict ACK Flow Control & 1:1 progress sync
   while (offset < totalBytes) {
     // Lockstep Backpressure: If sender is > 4MB ahead of Receiver ACK, pause to lockstep progress
-    while (!useWebRTC && (offset - activeSenderAckBytes > WINDOW_SIZE_BYTES)) {
-      await new Promise(r => setTimeout(r, 25));
+    while (offset - activeSenderAckBytes > WINDOW_SIZE_BYTES) {
+      await new Promise(r => setTimeout(r, 20));
     }
 
     const end = Math.min(offset + CHUNK_SIZE, totalBytes);
@@ -163,16 +163,16 @@ export async function sendFile(file, targetRecipient = 'group') {
     if (now - lastUIUpdate >= UI_THROTTLE_MS || offset === totalBytes) {
       lastUIUpdate = now;
       const elapsedTime = (now - startTime) / 1000 || 0.001;
-      const currentBytes = useWebRTC ? offset : Math.min(offset, activeSenderAckBytes);
+      const currentBytes = Math.min(offset, activeSenderAckBytes);
       const rawProgress = Math.min(99, Math.round((currentBytes / totalBytes) * 99));
-      const speed = (currentBytes / (1024 * 1024)) / elapsedTime;
+      const calculatedSpeed = (currentBytes / (1024 * 1024)) / elapsedTime;
 
       roomStore.update(s => ({
         ...s,
         activeTransfer: s.activeTransfer ? {
           ...s.activeTransfer,
           progress: Math.max(s.activeTransfer.progress || 0, rawProgress),
-          speed: speed > 0 ? speed.toFixed(2) : s.activeTransfer.speed
+          speed: calculatedSpeed.toFixed(2)
         } : null
       }));
     }
@@ -184,12 +184,10 @@ export async function sendFile(file, targetRecipient = 'group') {
   }
 
   // 3. STRICT LOCKSTEP COMPLETION: Wait for receiver to confirm 100% receipt before completing sender UI
-  if (!useWebRTC) {
-    let waitAckCounter = 0;
-    while (activeSenderAckBytes < totalBytes && activeSenderAckCallback && waitAckCounter < 600) {
-      await new Promise(r => setTimeout(r, 50));
-      waitAckCounter++;
-    }
+  let waitAckCounter = 0;
+  while (activeSenderAckBytes < totalBytes && activeSenderAckCallback && waitAckCounter < 1200) {
+    await new Promise(r => setTimeout(r, 50));
+    waitAckCounter++;
   }
 
   /** @type {import('../stores/roomStore.js').TransferItem} */

@@ -304,7 +304,7 @@
         </p>
       </div>
 
-    {:else if isTransferring && $roomStore.activeTransfer}
+    {:else if $roomStore.activeTransfer}
       <!-- STATE 1: Real-Time Live Stream Transfer -->
       <div class="w-full max-w-sm flex flex-col items-center space-y-3 sm:space-y-4 my-auto animate-fadeIn">
         <div class="p-3 sm:p-4 bg-gradient-to-br from-fire-500/20 to-fire-700/20 rounded-2xl border border-fire-500/40 shadow-lg shadow-fire-500/10">
